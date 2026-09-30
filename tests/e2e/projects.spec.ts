@@ -227,7 +227,9 @@ test("guided fixture conversation choices, Other, Skip, multi-selection and role
   await expect(page.getByRole("group", { name: "Millist põhiprobleemi soovid kõigepealt lahendada?" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Muu (kirjutan ise)" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Jäta vahele" })).toBeVisible();
-  await page.getByRole("button", { name: "Treeningute broneerimine" }).click();
+  const goalGroup = page.getByRole("group", { name: "Millist põhiprobleemi soovid kõigepealt lahendada?" });
+  await goalGroup.getByRole("button", { name: "Treeningute broneerimine" }).click();
+  await goalGroup.getByRole("button", { name: "Saada vastus" }).click();
   await expect(page.getByRole("heading", { name: "Rollide ettepanek", exact: true })).toBeVisible();
   await expect(page.getByText("Treener", { exact: true })).toBeVisible();
   let backlog = await (await request.get(`/api/projects/${project.id}/backlog`)).json();
