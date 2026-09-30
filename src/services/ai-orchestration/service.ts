@@ -4,10 +4,11 @@ import { conversationInputSchema, taskSchemas, type ConversationData, type Conve
 import { aiMode, configuredProvider, generateValidated, AiInvalidOutputError, AiUnavailableError, type AiProvider } from "@/lib/ai/provider";
 import { projectIdSchema } from "@/lib/validation/projects";
 import { BacklogError } from "@/lib/validation/backlog";
+import { storyInclude } from "@/services/stories/service";
 
 function decode(raw: string | null): Record<string, unknown> { try { return raw ? JSON.parse(raw) : {}; } catch { return {}; } }
-function isTask(value: unknown): value is ConversationTask { return value === "clarify_idea" || value === "propose_roles" || value === "propose_stories" || value === "recommend_priority"; }
-const proposalType: Partial<Record<ConversationTask, string>> = { propose_roles: "roles", propose_stories: "stories", recommend_priority: "priority" };
+function isTask(value: unknown): value is ConversationTask { return typeof value === "string" && value in taskSchemas; }
+const proposalType: Partial<Record<ConversationTask, string>> = { propose_roles: "roles", propose_stories: "stories", recommend_priority: "priority", propose_prototype: "prototype" };
 
 export function conversationService(client: PrismaClient, provider?: AiProvider) {
   async function project(id: string) {
@@ -69,7 +70,7 @@ export function conversationService(client: PrismaClient, provider?: AiProvider)
         task = source.response.payload.questions.every(item => item.id === question.id || previous.includes(item.id)) ? "propose_roles" : "clarify_idea";
       } else {
         text = input.text;
-        task = input.task ?? (latestResponse?.task === "propose_roles" ? "propose_roles" : latestResponse?.task === "propose_stories" ? "propose_stories" : latestResponse?.task === "recommend_priority" ? "recommend_priority" : "clarify_idea");
+        task = input.task ?? latestResponse?.task ?? "clarify_idea";
       }
       const message = await client.conversationMessage.create({ data: { projectId: id, role: "user", messageType: input.kind, content: text, structuredPayloadJson: JSON.stringify({ task, status: "processing", answeredQuestionIds }) } });
       userMessageId = message.id;
@@ -82,25 +83,33 @@ export function conversationService(client: PrismaClient, provider?: AiProvider)
       await client.conversationMessage.update({ where: { id: userMessageId }, data: { structuredPayloadJson: JSON.stringify({ task, status: "failed", answeredQuestionIds }) } });
       throw new BacklogError("Lisa enne backlogi vähemalt üks lugu.", 409);
     }
+    if (task === "propose_prototype" && !current.stories.some(story => story.id === current.selectedStoryId)) {
+      await client.conversationMessage.update({ where: { id: userMessageId }, data: { structuredPayloadJson: JSON.stringify({ task, status: "failed", answeredQuestionIds }) } });
+      throw new BacklogError("Vali backlogist lugu, millele kriteeriumid ja mockup koostada.", 409);
+    }
     const requestState = { task, answeredQuestionIds };
     try {
+      const selectedStory = task === "propose_prototype" && current.selectedStoryId ? await client.story.findFirst({ where: { id: current.selectedStoryId, projectId: id, archivedAt: null }, include: storyInclude }) : null;
+      if (task === "propose_prototype" && !selectedStory) throw new AiInvalidOutputError();
       const turns = await client.conversationMessage.findMany({ where: { projectId: id, role: { in: ["user", "assistant"] } }, orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: 12 });
       const context = {
         project: { name: current.name, description: current.description, currentStage: current.currentStage, recommendedNextStage: current.recommendedNextStage },
         roles: current.roles.map(role => ({ name: role.name, isPrimary: role.isPrimary })),
         backlog: current.stories.map(story => ({ id: story.id, role: story.role, action: story.action, benefit: story.benefit, position: story.position, status: story.status })),
         input: text,
+        selectedStoryId: current.selectedStoryId,
+        selectedStory: selectedStory ? { id: selectedStory.id, version: selectedStory.version, role: selectedStory.role, action: selectedStory.action, benefit: selectedStory.benefit, requiresMockup: selectedStory.requiresMockup, criteria: selectedStory.criteria.map(item => ({ text: item.text, mockupElementIds: JSON.parse(item.mockupElementIdsJson) })), openQuestions: selectedStory.openQuestions.filter(item => !item.resolvedAt).map(item => item.text), mockup: selectedStory.mockupVersions[0] ? JSON.parse(selectedStory.mockupVersions[0].structureJson) : null } : undefined,
         conversation: turns.reverse().map(turn => ({ role: turn.role, content: turn.content.slice(0, 4000) })),
         answeredQuestionIds: [...new Set([...history.messages.flatMap(message => message.answeredQuestionIds), ...answeredQuestionIds])],
-        boundaries: { mode: "proposal_only", mutableEntities: [] },
+        boundaries: { mode: "proposal_only", mutableEntities: [], ...(selectedStory ? { targetStoryId: selectedStory.id, baseStoryVersion: selectedStory.version } : {}) },
       };
       const response = await generateValidated(provider ?? configuredProvider(), task, context);
       await client.$transaction(async tx => {
         let proposalId: string | undefined;
         const type = proposalType[task];
         if (type) {
-          await tx.proposal.updateMany({ where: { projectId: id, type, status: "pending" }, data: { status: "superseded", resolvedAt: new Date() } });
-          const proposal = await tx.proposal.create({ data: { projectId: id, type, inputText: text, afterSnapshotJson: JSON.stringify(response.payload) } });
+          await tx.proposal.updateMany({ where: { projectId: id, type, status: "pending", ...(selectedStory ? { targetStoryId: selectedStory.id } : {}) }, data: { status: "superseded", resolvedAt: new Date() } });
+          const proposal = await tx.proposal.create({ data: { projectId: id, type, inputText: text, afterSnapshotJson: JSON.stringify(response.payload), ...(selectedStory ? { targetStoryId: selectedStory.id, baseStoryVersion: selectedStory.version, beforeSnapshotJson: JSON.stringify(selectedStory) } : {}) } });
           proposalId = proposal.id;
         }
         await tx.conversationMessage.create({ data: { projectId: id, role: "assistant", messageType: task, content: response.message, structuredPayloadJson: JSON.stringify({ task, response, proposalId, replyTo: userMessageId }) } });

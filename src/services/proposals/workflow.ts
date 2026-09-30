@@ -1,9 +1,12 @@
 import "server-only";
 import type { PrismaClient } from "@/generated/prisma/client";
-import { priorityPayloadSchema, proposalCommandSchema, rolePayloadSchema, storyPayloadSchema } from "@/domain/ai/contracts";
+import { priorityPayloadSchema, proposalCommandSchema, rolePayloadSchema, storyPayloadSchema, prototypePayloadSchema } from "@/domain/ai/contracts";
 import { projectIdSchema } from "@/lib/validation/projects";
 import { BacklogError } from "@/lib/validation/backlog";
-import { backlogSnapshot, recordBacklogChange } from "@/services/stories/service";
+import { backlogSnapshot, recordBacklogChange, storyInclude } from "@/services/stories/service";
+import { checkCriterion, mockupElementIds } from "@/domain/criteria/validation";
+import { calculateReadiness } from "@/domain/readiness/readiness";
+import { appendMockup } from "@/services/mockups/service";
 
 export function proposalWorkflowService(client: PrismaClient) {
   return {
@@ -15,6 +18,38 @@ export function proposalWorkflowService(client: PrismaClient) {
         if (!proposal) throw new BacklogError("Ettepanekut ei leitud.", 404);
         if (proposal.status === "applied") return;
         if (proposal.status !== "pending") throw new BacklogError("Ettepanek pole enam aktiivne.", 409);
+
+        if (command.kind === "reject_prototype") {
+          if (proposal.type !== "prototype") throw new BacklogError("Vale ettepaneku tüüp.", 400);
+          await tx.proposal.updateMany({ where: { id: proposal.id, projectId, status: "pending" }, data: { status: "rejected", resolvedAt: new Date() } });
+          return;
+        }
+        if (command.kind === "confirm_prototype") {
+          if (proposal.type !== "prototype") throw new BacklogError("Vale ettepaneku tüüp.", 400);
+          const payload = prototypePayloadSchema.parse(JSON.parse(proposal.afterSnapshotJson));
+          if (!proposal.targetStoryId || payload.targetStoryId !== proposal.targetStoryId || payload.baseStoryVersion !== proposal.baseStoryVersion) throw new BacklogError("Ettepaneku loo piirang on vigane.", 400);
+          const story = await tx.story.findFirst({ where: { id: proposal.targetStoryId, projectId, archivedAt: null }, include: storyInclude });
+          if (!story) throw new BacklogError("Ettepaneku lugu ei leitud.", 404);
+          if (story.version !== proposal.baseStoryVersion) throw new BacklogError("Lugu on pärast ettepaneku loomist muutunud. Genereeri prototüüp uuesti.", 409);
+          const ids = mockupElementIds(JSON.stringify(payload.mockup));
+          if (new Set(command.criteria.map(item => item.temporaryId)).size !== command.criteria.length || command.criteria.some(item => !payload.criteria.some(offered => offered.temporaryId === item.temporaryId) || new Set(item.mockupElementIds).size !== item.mockupElementIds.length || checkCriterion(item.text, item.mockupElementIds, ids).status === "fail")) throw new BacklogError("Paranda kriteeriumide tekst või mockup-viited enne kinnitamist.", 422);
+          const before = await backlogSnapshot(tx, projectId);
+          const claim = await tx.proposal.updateMany({ where: { id: proposal.id, projectId, status: "pending" }, data: { status: "applied", resolvedAt: new Date() } });
+          if (!claim.count) return;
+          await tx.acceptanceCriterion.deleteMany({ where: { storyId: story.id } });
+          for (const [position, criterion] of command.criteria.entries()) {
+            const check = checkCriterion(criterion.text, criterion.mockupElementIds, ids);
+            await tx.acceptanceCriterion.create({ data: { storyId: story.id, text: criterion.text, position, origin: "ai", mockupElementIdsJson: JSON.stringify(criterion.mockupElementIds), validationStatus: check.status, validationMessagesJson: JSON.stringify(check.messages) } });
+          }
+          await appendMockup(tx, story.id, payload.mockup.screenName, payload.mockup, "ai");
+          await tx.story.update({ where: { id: story.id }, data: { ...(command.acceptProposedStory && payload.proposedStory ? payload.proposedStory : {}), version: { increment: 1 } } });
+          const changed = await tx.story.findUniqueOrThrow({ where: { id: story.id }, include: storyInclude });
+          const readiness = calculateReadiness(changed);
+          if (changed.status === "ready_for_development" && !readiness.ready) await tx.story.update({ where: { id: story.id }, data: { status: "needs_clarification" } });
+          await tx.project.update({ where: { id: projectId }, data: { currentStage: "prototype", recommendedNextStage: "refinements", updatedAt: new Date() } });
+          await recordBacklogChange(tx, projectId, "apply_prototype_proposal", story.id, before);
+          return;
+        }
 
         if (command.kind === "confirm_roles") {
           if (proposal.type !== "roles") throw new BacklogError("Vale ettepaneku tüüp.", 400);

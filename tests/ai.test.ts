@@ -8,7 +8,7 @@ import { projectService } from "@/services/projects/service";
 import { storyService } from "@/services/stories/service";
 import { conversationService } from "@/services/ai-orchestration/service";
 import { proposalWorkflowService } from "@/services/proposals/workflow";
-import { clarificationSchema, priorityRecommendationSchema, roleProposalSchema, storyProposalSchema } from "@/domain/ai/contracts";
+import { clarificationSchema, priorityRecommendationSchema, roleProposalSchema, storyProposalSchema, prototypePayloadSchema, type PrototypePayload } from "@/domain/ai/contracts";
 import { AiInvalidOutputError, AiUnavailableError, FixtureAiProvider, OpenAiProvider, generateValidated, type AiProvider, type AiRequest } from "@/lib/ai/provider";
 
 const fixture = new FixtureAiProvider();
@@ -169,6 +169,81 @@ describe("role, story and priority proposal workflow", () => {
     client = createDatabaseClient(`file:${databasePath}`);
   }, 30_000);
   afterAll(async () => { await client?.$disconnect(); if (directory) await rm(directory, { recursive: true, force: true }); });
+
+  async function prototypeSetup() {
+    const project = await projectService(client).create({ name: "Prototüüp" });
+    const stories = storyService(client);
+    await stories.mutate(project.id, { type: "create_story", role: "Liige", action: "broneerida treeningu", benefit: "saan treenida", requiresMockup: true, status: "idea", size: null });
+    await stories.mutate(project.id, { type: "create_story", role: "Haldur", action: "vaadata aruannet", benefit: "näen tulemust", requiresMockup: true, status: "idea", size: null });
+    const before = await stories.get(project.id);
+    const target = before.stories[0];
+    await stories.mutate(project.id, { type: "select", storyId: target.id });
+    const requests: AiRequest[] = [];
+    const recorder: AiProvider = { async generateStructured<T>(request: AiRequest) { requests.push(request); return fixture.generateStructured<T>(request); } };
+    const data = await conversationService(client, recorder).submit(project.id, { kind: "text", task: "propose_prototype", text: "Koosta prototüüp" });
+    const message = data.messages.find(item => item.task === "propose_prototype" && item.response)!;
+    expect(message).toBeDefined();
+    const payload = message.response && "targetStoryId" in message.response.payload ? message.response.payload : null;
+    expect(payload).not.toBeNull();
+    return { project, stories, target, sibling: before.stories[1], message, payload: payload as PrototypePayload, requests };
+  }
+
+  it("previews only; applies accepted and edited criteria atomically, isolates siblings and undoes the complete prototype", async () => {
+    const { project, stories, target, sibling, message, payload, requests } = await prototypeSetup();
+    expect(requests[0]).toMatchObject({ task: "propose_prototype", context: { selectedStoryId: target.id, selectedStory: { id: target.id, version: target.version, criteria: [], openQuestions: [], mockup: null }, boundaries: { targetStoryId: target.id, baseStoryVersion: target.version, mode: "proposal_only" } } });
+    expect((await stories.get(project.id)).stories[0]).toEqual(target);
+    const eventsBefore = await client.changeEvent.count({ where: { projectId: project.id } });
+    const criteria = payload.criteria.slice(0, 3).map((item, index) => index === 1 ? { ...item, text: "Kinnitamise nupp salvestab ühe broneeringu." } : item);
+    const command = { kind: "confirm_prototype", proposalId: message.proposalId, acceptProposedStory: true, criteria };
+    await proposalWorkflowService(client).confirm(project.id, command);
+    await proposalWorkflowService(client).confirm(project.id, command);
+    const applied = await stories.get(project.id);
+    expect(applied.stories[1]).toEqual(sibling);
+    expect(applied.stories[0].version).toBe(target.version + 1);
+    expect(applied.stories[0].criteria.map(item => item.text)).toEqual(criteria.map(item => item.text));
+    expect(applied.stories[0].criteria.every(item => item.origin === "ai" && item.check.status === "pass")).toBe(true);
+    expect(applied.stories[0].mockupVersions).toMatchObject([{ version: 1, source: "ai", structureJson: JSON.stringify(payload.mockup) }]);
+    expect(applied.stories[0].readiness.ready).toBe(true);
+    expect(await client.changeEvent.count({ where: { projectId: project.id } })).toBe(eventsBefore + 1);
+    expect(applied.recommendedNextStage).toBe("refinements");
+    await stories.mutate(project.id, { type: "undo" });
+    const undone = await stories.get(project.id);
+    expect(undone.stories[0].criteria).toEqual(target.criteria);
+    expect(undone.stories[0].version).toBe(target.version);
+    expect(undone.stories[0].mockupVersions.map(item => item.version)).toEqual([2, 1]);
+    expect(JSON.parse(undone.stories[0].mockupVersions[0].structureJson).elements).toEqual([]);
+    expect(undone.stories[1]).toEqual(sibling);
+    expect(undone.recommendedNextStage).toBe("idea");
+  });
+
+  it("rejects stale versions, cross-project/target commands and invalid edited mappings without partial writes", async () => {
+    const { project, stories, target, message, payload } = await prototypeSetup();
+    const workflow = proposalWorkflowService(client);
+    const command = { kind: "confirm_prototype", proposalId: message.proposalId, acceptProposedStory: false, criteria: payload.criteria.slice(0, 3) };
+    const foreign = await projectService(client).create({ name: "Võõras" });
+    await expect(workflow.confirm(foreign.id, command)).rejects.toMatchObject({ status: 404 });
+    await expect(workflow.confirm(project.id, { ...command, targetStoryId: "foreign" })).rejects.toThrow();
+    await expect(workflow.confirm(project.id, { ...command, criteria: [{ ...payload.criteria[0], mockupElementIds: ["nonexistent"] }] })).rejects.toMatchObject({ status: 422 });
+    await expect(workflow.confirm(project.id, { ...command, criteria: [{ ...payload.criteria[0], temporaryId: "fabricated" }] })).rejects.toMatchObject({ status: 422 });
+    expect((await stories.get(project.id)).stories[0]).toEqual(target);
+    await stories.mutate(project.id, { type: "create_question", storyId: target.id, text: "Kas broneering vajab kinnitust?" });
+    const before = await stories.get(project.id);
+    await expect(workflow.confirm(project.id, command)).rejects.toMatchObject({ status: 409 });
+    expect(await stories.get(project.id)).toEqual(before);
+    expect(await client.proposal.findUniqueOrThrow({ where: { id: message.proposalId! } })).toMatchObject({ status: "pending" });
+  });
+
+  it("validates safe prototype trees and scope with one repair, discards without mutation", async () => {
+    const { project, stories, target, message, payload } = await prototypeSetup();
+    expect(prototypePayloadSchema.safeParse({ ...payload, criteria: [payload.criteria[0], payload.criteria[0], payload.criteria[2]] }).success).toBe(false);
+    expect(prototypePayloadSchema.safeParse({ ...payload, mockup: { ...payload.mockup, elements: [{ id: "x", type: "script", text: "alert(1)" }] } }).success).toBe(false);
+    const wrongScope: AiProvider = { async generateStructured<T>() { return { message: "Ettepanek", payload: { ...payload, targetStoryId: "another-story" }, nextActions: [{ id: "again", label: "Uuesti", action: "propose_prototype" }] } as T; } };
+    await expect(generateValidated(wrongScope, "propose_prototype", { selectedStory: { id: target.id, version: target.version } })).rejects.toBeInstanceOf(AiInvalidOutputError);
+    const before = await stories.get(project.id);
+    await proposalWorkflowService(client).confirm(project.id, { kind: "reject_prototype", proposalId: message.proposalId });
+    expect(await stories.get(project.id)).toEqual(before);
+    await expect(proposalWorkflowService(client).confirm(project.id, { kind: "confirm_prototype", proposalId: message.proposalId, acceptProposedStory: false, criteria: payload.criteria.slice(0, 3) })).rejects.toMatchObject({ status: 409 });
+  });
 
   it("validates bounded happy-path and scoped priority response contracts", async () => {
     const stories = await fixture.generateStructured<unknown>({ task: "propose_stories", systemInstructions: "", context: { roles: [{ name: "Liige", isPrimary: true }] }, outputSchema: {} });
