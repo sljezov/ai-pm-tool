@@ -69,7 +69,7 @@ export function Backlog({ projectId, initial }: { projectId: string; initial: Ba
    if (command.type === "archive_story" && data.mvpBoundaryAfterStoryId === command.storyId) setNotice("MVP piir eemaldati koos looga. Määra MVP piir uuesti.");
    if (command.type !== "select" && command.type !== "undo") setNotice(previous => previous || "Muudatus salvestatud. Saad viimase muudatuse tagasi võtta.");
    if (command.type === "undo") setNotice("Viimane muudatus on tagasi võetud.");
-   setData(result); router.refresh(); return true;
+   setData(result); window.dispatchEvent(new CustomEvent("backlog-updated", { detail: projectId })); router.refresh(); return true;
   } catch (cause) { setError(cause instanceof Error ? cause.message : "Salvestamine ebaõnnestus."); return false; }
   finally { submitting.current = false; setBusy(false); }
  }

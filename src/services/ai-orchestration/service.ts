@@ -39,6 +39,7 @@ export function conversationService(client: PrismaClient, provider?: AiProvider)
       mode: aiMode(),
       roles: current.roles.map(role => ({ id: role.id, name: role.name, isPrimary: role.isPrimary })),
       stories: current.stories.map(story => ({ id: story.id, role: story.role, action: story.action, benefit: story.benefit, position: story.position })),
+      selectedStoryId: current.selectedStoryId,
       messages: rows.map(row => {
         const stored = decode(row.structuredPayloadJson);
         const task = isTask(stored.task) ? stored.task : null;
