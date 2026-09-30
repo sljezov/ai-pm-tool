@@ -74,7 +74,15 @@ function PriorityProposal({ payload, proposalId, status, stories, state }: { pay
 export function Conversation({ projectId, initial }: { projectId: string; initial: ConversationData }) {
   const router = useRouter(); const [data, setData] = useState(initial); const [text, setText] = useState(""); const [busy, setBusy] = useState(false); const submitting = useRef(false); const [error, setError] = useState(""); const inputRef = useRef<HTMLTextAreaElement>(null);
   const historyRef = useRef<HTMLDivElement>(null);
-  useEffect(() => { const box = historyRef.current; if (box) box.scrollTop = box.scrollHeight; }, [data]);
+  const nearBottom = useRef(true);
+  useEffect(() => {
+    const box = historyRef.current;
+    if (!box) return;
+    const onScroll = () => { nearBottom.current = box.scrollHeight - box.scrollTop - box.clientHeight < 80; };
+    box.addEventListener("scroll", onScroll);
+    return () => box.removeEventListener("scroll", onScroll);
+  }, []);
+  useEffect(() => { const box = historyRef.current; if (box && nearBottom.current) box.scrollTop = box.scrollHeight; }, [data, busy]);
   useEffect(() => {
     async function sync(event: Event) {
       if (event instanceof CustomEvent && event.detail !== projectId) return;
