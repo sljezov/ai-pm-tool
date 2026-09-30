@@ -16,7 +16,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ pro
 export async function PATCH(request: Request, { params }: { params: Promise<{ projectId: string }> }) {
   try {
     const body = await request.text();
-    if (body.length > 12_000) return NextResponse.json({ error: "Ettepanek on liiga suur." }, { status: 400 });
+    if (body.length > 100_000) return NextResponse.json({ error: "Ettepanek on liiga suur." }, { status: 400 });
     const projectId = (await params).projectId;
     await proposalWorkflowService(db).confirm(projectId, JSON.parse(body));
     return NextResponse.json(await conversationService(db).get(projectId));

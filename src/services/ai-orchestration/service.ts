@@ -19,8 +19,8 @@ export function conversationService(client: PrismaClient, provider?: AiProvider)
   async function get(id: string): Promise<ConversationData> {
     const current = await project(id);
     const rows = await client.conversationMessage.findMany({ where: { projectId: id }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
-    const proposalIds = rows.flatMap(row => { const value = decode(row.structuredPayloadJson).proposalId; return typeof value === "string" ? [value] : []; });
-    const statuses = new Map((proposalIds.length ? await client.proposal.findMany({ where: { projectId: id, id: { in: proposalIds } }, select: { id: true, status: true } }) : []).map(item => [item.id, item.status]));
+    const proposalIds = rows.flatMap(row => { const stored = decode(row.structuredPayloadJson); const value = stored.proposalId; const findings = Array.isArray(stored.findingProposals) ? stored.findingProposals as Array<{ proposalId: string }> : []; return [...(typeof value === "string" ? [value] : []), ...findings.map(item => item.proposalId)]; });
+    const statuses = new Map((proposalIds.length ? await client.proposal.findMany({ where: { projectId: id, id: { in: proposalIds } }, select: { id: true, status: true, beforeSnapshotJson: true } }) : []).map(item => [item.id, item]));
     return {
       mode: aiMode(),
       roles: current.roles.map(role => ({ id: role.id, name: role.name, isPrimary: role.isPrimary })),
@@ -30,7 +30,7 @@ export function conversationService(client: PrismaClient, provider?: AiProvider)
         const task = isTask(stored.task) ? stored.task : null;
         const parsed = task && row.role === "assistant" ? taskSchemas[task].safeParse(stored.response) : null;
         const proposalId = typeof stored.proposalId === "string" ? stored.proposalId : null;
-        return { id: row.id, role: row.role, messageType: row.messageType, content: row.content, createdAt: row.createdAt.toISOString(), task, response: parsed?.success ? parsed.data : null, proposalId, proposalStatus: proposalId ? statuses.get(proposalId) ?? null : null, requestStatus: stored.status === "processing" || stored.status === "complete" || stored.status === "failed" ? stored.status : null, answeredQuestionIds: Array.isArray(stored.answeredQuestionIds) ? stored.answeredQuestionIds.filter((value): value is string => typeof value === "string") : [] } satisfies ConversationEntry;
+        return { id: row.id, role: row.role, messageType: row.messageType, content: row.content, createdAt: row.createdAt.toISOString(), task, response: parsed?.success ? parsed.data : null, proposalId, proposalStatus: proposalId ? statuses.get(proposalId)?.status ?? null : null, findingProposals: (Array.isArray(stored.findingProposals) ? stored.findingProposals as Array<{ temporaryId: string; proposalId: string }> : []).map(item => ({ ...item, status: statuses.get(item.proposalId)?.status ?? "superseded", beforeStories: (() => { try { const value = JSON.parse(statuses.get(item.proposalId)?.beforeSnapshotJson ?? "[]"); return Array.isArray(value) ? value : []; } catch { return []; } })() })), requestStatus: stored.status === "processing" || stored.status === "complete" || stored.status === "failed" ? stored.status : null, answeredQuestionIds: Array.isArray(stored.answeredQuestionIds) ? stored.answeredQuestionIds.filter((value): value is string => typeof value === "string") : [] } satisfies ConversationEntry;
       }),
     };
   }
@@ -95,7 +95,7 @@ export function conversationService(client: PrismaClient, provider?: AiProvider)
       const context = {
         project: { name: current.name, description: current.description, currentStage: current.currentStage, recommendedNextStage: current.recommendedNextStage },
         roles: current.roles.map(role => ({ name: role.name, isPrimary: role.isPrimary })),
-        backlog: current.stories.map(story => ({ id: story.id, role: story.role, action: story.action, benefit: story.benefit, position: story.position, status: story.status })),
+        backlog: task === "review_backlog" ? await client.story.findMany({ where: { projectId: id, archivedAt: null }, orderBy: { position: "asc" }, include: storyInclude }) : current.stories.map(story => ({ id: story.id, role: story.role, action: story.action, benefit: story.benefit, position: story.position, status: story.status })),
         input: text,
         selectedStoryId: current.selectedStoryId,
         selectedStory: selectedStory ? { id: selectedStory.id, version: selectedStory.version, role: selectedStory.role, action: selectedStory.action, benefit: selectedStory.benefit, requiresMockup: selectedStory.requiresMockup, criteria: selectedStory.criteria.map(item => ({ text: item.text, mockupElementIds: JSON.parse(item.mockupElementIdsJson) })), openQuestions: selectedStory.openQuestions.filter(item => !item.resolvedAt).map(item => item.text), mockup: selectedStory.mockupVersions[0] ? JSON.parse(selectedStory.mockupVersions[0].structureJson) : null } : undefined,
@@ -106,6 +106,14 @@ export function conversationService(client: PrismaClient, provider?: AiProvider)
       const response = await generateValidated(provider ?? configuredProvider(), task, context);
       await client.$transaction(async tx => {
         let proposalId: string | undefined;
+        const findingProposals: Array<{ temporaryId: string; proposalId: string }> = [];
+        if ("findings" in response.payload) {
+          await tx.proposal.updateMany({ where: { projectId: id, type: "grooming", status: "pending" }, data: { status: "superseded", resolvedAt: new Date() } });
+          for (const finding of response.payload.findings) {
+            const row = await tx.proposal.create({ data: { projectId: id, type: "grooming", inputText: text, afterSnapshotJson: JSON.stringify(finding), beforeSnapshotJson: JSON.stringify(context.backlog) } });
+            findingProposals.push({ temporaryId: finding.temporaryId, proposalId: row.id });
+          }
+        }
         const type = proposalType[task];
         if (type) {
           await tx.proposal.updateMany({ where: { projectId: id, type, status: "pending", ...(selectedStory ? { targetStoryId: selectedStory.id } : {}) }, data: { status: "superseded", resolvedAt: new Date() } });
@@ -115,7 +123,7 @@ export function conversationService(client: PrismaClient, provider?: AiProvider)
             await tx.proposal.create({ data: { projectId: id, type: "cross_story_suggestion", targetStoryId: suggestion.targetStoryId, inputText: text, afterSnapshotJson: JSON.stringify({ ...suggestion, sourceProposalId: proposal.id }) } });
           }
         }
-        await tx.conversationMessage.create({ data: { projectId: id, role: "assistant", messageType: task, content: response.message, structuredPayloadJson: JSON.stringify({ task, response, proposalId, replyTo: userMessageId }) } });
+        await tx.conversationMessage.create({ data: { projectId: id, role: "assistant", messageType: task, content: response.message, structuredPayloadJson: JSON.stringify({ task, response, proposalId, findingProposals, replyTo: userMessageId }) } });
         await tx.conversationMessage.update({ where: { id: userMessageId }, data: { structuredPayloadJson: JSON.stringify({ ...requestState, status: "complete" }) } });
       });
     } catch (error) {

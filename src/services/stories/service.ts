@@ -1,4 +1,5 @@
 import "server-only";
+import { applyGrooming } from "@/services/grooming/service";
 import type { Prisma, PrismaClient } from "@/generated/prisma/client";
 import { projectIdSchema } from "@/lib/validation/projects";
 import { backlogCommandSchema, BacklogError } from "@/lib/validation/backlog";
@@ -39,6 +40,7 @@ export function storyService(client: PrismaClient) {
     projectIdSchema.parse(projectId);
     const command = backlogCommandSchema.parse(input);
     await client.$transaction(async tx => {
+      if (command.type === "split_story" || command.type === "merge_stories") { await applyGrooming(tx, projectId, command); return; }
       const before = await backlogSnapshot(tx, projectId);
       const active = before.stories.filter(story => !story.archivedAt);
       const story = "storyId" in command && command.storyId ? active.find(item => item.id === command.storyId) : undefined;

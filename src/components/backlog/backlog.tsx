@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState, type FormEvent } from "react";
+import { ManualGrooming } from "@/components/backlog/grooming";
 import { MockupEditor } from "@/components/mockup/editor";
 import { mockupElementIds } from "@/domain/criteria/validation";
 import { useRouter } from "next/navigation";
@@ -90,6 +91,7 @@ export function Backlog({ projectId, initial }: { projectId: string; initial: Ba
     <div className="actions"><button aria-label={`Liiguta lugu ${index + 1} üles`} disabled={busy || index === 0} onClick={() => move(item.id, index - 1)}>↑</button><button aria-label={`Liiguta lugu ${index + 1} alla`} disabled={busy || index === data.stories.length - 1} onClick={() => move(item.id, index + 1)}>↓</button><button disabled={busy} onClick={() => mutate({ type: "boundary", storyId: item.id })}>MVP piir siia</button></div>
    </article>{data.mvpBoundaryAfterStoryId === item.id && <div className="mvp-line"><strong>MVP piir</strong><button disabled={busy} onClick={() => mutate({ type: "boundary", storyId: null })}>Eemalda piir</button></div>}
   </li>)}</ol>
+  {!!data.stories.length && <ManualGrooming stories={data.stories} selectedStoryId={data.selectedStoryId} busy={busy} mutate={mutate} />}
   {story && !creating && <section className="story-inspector" key={`${story.id}-${story.version}`} aria-label="Valitud kasutajalugu">
    <div id="story-story"><h3>Valitud kasutajalugu</h3><p className="muted">Versioon {story.version} · {story.origin === "manual" ? "Käsitsi loodud" : "AI loodud"}</p><StoryForm story={story} mutate={mutate} busy={busy} /></div>
    <details className="readiness" open><summary>Definition of Ready: {story.readiness.ready ? "tingimused täidetud" : "vajab tööd"}</summary>{story.readiness.issues.length > 0 && <ul>{story.readiness.issues.map((issue, i) => <li key={i}><a href={`#${areaId(issue.area)}`}>{issue.message}</a></li>)}</ul>}</details>

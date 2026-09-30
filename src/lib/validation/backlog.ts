@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { replacementSchema } from "@/domain/grooming/contracts";
 import { mockupDocumentSchema } from "@/domain/mockup/document";
 const id = z.string().min(1).max(100);
 const story = { role: z.string().trim().max(200), action: z.string().trim().max(1000), benefit: z.string().trim().max(1000), status: z.enum(["idea", "needs_clarification", "reviewed", "ready_for_development"]), size: z.enum(["S", "M", "L"]).nullable(), requiresMockup: z.boolean() };
@@ -18,6 +19,7 @@ export const backlogCommandSchema = z.discriminatedUnion("type", [
  z.object({ type: z.literal("delete_question"), storyId: id, questionId: id }).strict(),
  z.object({ type: z.literal("save_mockup"), storyId: id, name: z.string().trim().min(1).max(200), document: mockupDocumentSchema }).strict(),
  z.object({ type: z.literal("restore_mockup"), storyId: id, mockupVersionId: id }).strict(),
+ ...replacementSchema.options,
  z.object({ type: z.literal("undo") }).strict(),
 ]);
 export class BacklogError extends Error {

@@ -166,6 +166,52 @@ test("manual mockup editing, safe rendering, history and restore persist", async
 });
 
 
+test("manual split and independent AI grooming findings preview, apply and undo atomically", async ({ page, request }, testInfo) => {
+  const project = await (await request.post("/api/projects", { data: { name: "WP08 groomimine" } })).json();
+  const base = `/api/projects/${project.id}`;
+  const create = async (action: string, size: "L" | null = null) => (await (await request.post(`${base}/backlog`, { data: { type: "create_story", role: "Liige", action, benefit: "koht on tagatud", status: "idea", size, requiresMockup: false } })).json()).stories;
+  const first = (await create("luua konto ja kinnitada konto", "L"))[0];
+  await request.post(`${base}/backlog`, { data: { type: "create_criterion", storyId: first.id, text: "Teenus salvestab uue konto." } });
+  await request.post(`${base}/backlog`, { data: { type: "create_criterion", storyId: first.id, text: "Teenus kinnitab konto e-postiga." } });
+  await create("broneerida treeningu");
+  await create("broneerida treeningu");
+  await request.post(`${base}/backlog`, { data: { type: "select", storyId: first.id } });
+
+  await page.goto(`/projects/${project.id}`);
+  const backlog = page.locator("#panel-backlog");
+  const grooming = backlog.locator(".manual-grooming");
+  await grooming.getByRole("button", { name: "Jaga valitud lugu" }).click();
+  await expect(grooming.getByRole("heading", { name: "Jagamise eelvaade" })).toBeVisible();
+  await expect(grooming.getByText("Lähtelood arhiveeritakse.", { exact: false })).toBeVisible();
+  await grooming.getByLabel("Tegevus").nth(0).fill("luua konto");
+  await grooming.getByLabel("Tegevus").nth(1).fill("kinnitada konto");
+  await grooming.getByRole("button", { name: "Kinnita jagamine" }).click();
+  await expect(backlog.locator(".story-card")).toHaveCount(4);
+  let state = await (await request.get(`${base}/backlog`)).json();
+  expect(state.stories.slice(0, 2).map((story: { criteria: unknown[] }) => story.criteria.length)).toEqual([1, 1]);
+  await backlog.getByRole("button", { name: "Võta tagasi", exact: true }).click();
+  await expect(backlog.locator(".story-card")).toHaveCount(3);
+
+  await page.getByRole("button", { name: "Vaata backlog üle" }).click();
+  const review = page.locator(".grooming-review").last();
+  await expect(review.getByRole("heading", { name: "Backlogi ülevaatus" })).toBeVisible();
+  const duplicate = review.locator(".finding-duplicate");
+  const oversized = review.locator(".finding-oversized");
+  await expect(duplicate.getByText("Lähtelood arhiveeritakse.", { exact: false })).toBeVisible();
+  state = await (await request.get(`${base}/backlog`)).json();
+  expect(state.stories).toHaveLength(3);
+  await duplicate.getByRole("button", { name: "Rakenda leid" }).click();
+  await expect(duplicate.getByText("Leid rakendatud", { exact: true })).toBeVisible();
+  await expect(oversized.getByRole("button", { name: "Rakenda leid" })).toBeVisible();
+  await expect(backlog.locator(".story-card")).toHaveCount(2);
+  await backlog.getByRole("button", { name: "Võta tagasi", exact: true }).click();
+  await expect(backlog.locator(".story-card")).toHaveCount(3);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("tab", { name: "Tööruum" }).click();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath("grooming-mobile.png"), fullPage: true });
+});
+
 test("guided fixture conversation choices, Other, Skip, multi-selection and roles persist", async ({ page, request }, testInfo) => {
   const created = await request.post("/api/projects", { data: { name: "AI spordiklubi", description: "Spordiklubi rakendus" } });
   const project = await created.json();

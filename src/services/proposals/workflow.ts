@@ -1,4 +1,6 @@
 import "server-only";
+import { findingSchema } from "@/domain/grooming/contracts";
+import { applyGrooming } from "@/services/grooming/service";
 import type { PrismaClient } from "@/generated/prisma/client";
 import { priorityPayloadSchema, proposalCommandSchema, rolePayloadSchema, storyPayloadSchema, prototypePayloadSchema, refinementPayloadSchema } from "@/domain/ai/contracts";
 import { refinementErrors } from "@/domain/ai/refinement";
@@ -20,6 +22,17 @@ export function proposalWorkflowService(client: PrismaClient) {
         if (proposal.status === "applied") return;
         if (proposal.status !== "pending") throw new BacklogError("Ettepanek pole enam aktiivne.", 409);
 
+        if (command.kind === "confirm_grooming" || command.kind === "ignore_grooming") {
+          if (proposal.type !== "grooming") throw new BacklogError("Vale ettepaneku tüüp.", 400);
+          if (command.kind === "ignore_grooming") {
+            await tx.proposal.updateMany({ where: { id: proposal.id, status: "pending" }, data: { status: "rejected", resolvedAt: new Date() } }); return;
+          }
+          const finding = findingSchema.parse(JSON.parse(proposal.afterSnapshotJson));
+          if (command.operation.type !== finding.operation.type || JSON.stringify(command.operation.sources) !== JSON.stringify(finding.operation.sources)) throw new BacklogError("Muuta saab ainult selle leiu tulemust, mitte lähteandmeid.", 400);
+          const claim = await tx.proposal.updateMany({ where: { id: proposal.id, status: "pending" }, data: { status: "applied", resolvedAt: new Date() } });
+          if (!claim.count) return;
+          await applyGrooming(tx, projectId, command.operation, "ai"); return;
+        }
         if (command.kind === "reject_prototype" || command.kind === "reject_refinement") {
           if (proposal.type !== (command.kind === "reject_refinement" ? "refinement" : "prototype")) throw new BacklogError("Vale ettepaneku tüüp.", 400);
           await tx.proposal.updateMany({ where: { id: proposal.id, projectId, status: "pending" }, data: { status: "rejected", resolvedAt: new Date() } });
