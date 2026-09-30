@@ -21,12 +21,21 @@ export class OpenAiProvider implements AiProvider {
       if (!response.ok) throw new AiUnavailableError();
       const body = await response.text();
       if (body.length > 100_000) throw new AiInvalidOutputError();
-      const data = JSON.parse(body);
-      if (data.status !== "completed") throw new AiInvalidOutputError();
-      const content = data.output?.filter((item: { type: string }) => item.type === "message").flatMap((item: { content: unknown[] }) => item.content) ?? [];
-      if (content.some((part: { type: string }) => part.type === "refusal")) throw new AiInvalidOutputError();
-      const value = content.filter((part: { type: string }) => part.type === "output_text").map((part: { text: string }) => part.text).join("");
-      return value as T;
+      try {
+        const data = JSON.parse(body) as { status?: unknown; output?: unknown };
+        if (data.status !== "completed" || !Array.isArray(data.output)) throw new AiInvalidOutputError();
+        const content = data.output.flatMap(item => {
+          if (!item || typeof item !== "object" || !("type" in item) || item.type !== "message" || !("content" in item) || !Array.isArray(item.content)) return [];
+          return item.content;
+        });
+        if (content.some(part => part && typeof part === "object" && "type" in part && part.type === "refusal")) throw new AiInvalidOutputError();
+        const value = content.flatMap(part => part && typeof part === "object" && "type" in part && part.type === "output_text" && "text" in part && typeof part.text === "string" ? [part.text] : []).join("");
+        if (!value) throw new AiInvalidOutputError();
+        return value as T;
+      } catch (error) {
+        if (error instanceof AiInvalidOutputError) throw error;
+        throw new AiInvalidOutputError();
+      }
     } catch (error) { if (error instanceof AiInvalidOutputError) throw error; throw new AiUnavailableError(); }
   }
 }

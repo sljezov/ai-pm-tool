@@ -49,4 +49,12 @@ The application is a single local workspace with no authentication. Do not expos
 
 The [implementation specification](docs/IMPLEMENTATION_SPEC.md) describes the complete product, domain rules and intended workflows.
 
-AI conversation, proposal generation, wireframe rendering and story split/merge are not available yet. These controls are identified in the workspace. Manual backlog management works independently of these capabilities.
+Conversation accepts a project idea and follows up with clarification questions, choices, `Muu (kirjutan ise)` and `Jäta vahele`. Answers and role proposals persist across reloads. AI produces proposals; generating roles does not add them to project data. Role confirmation, story generation and split/merge are planned later workflows.
+
+The story inspector supports structured mockup fixtures, JSON editing, a safe preview, version history and restore as a new version. Mockups never execute generated HTML, scripts or navigation.
+
+### AI configuration
+
+The example environment uses `AI_PROVIDER="fixture"` for a deterministic demonstration, visibly marked as `Näidis-AI · fixture`. Fixture answers are scripted examples rather than live model interpretation. Set `AI_PROVIDER="openai"`, `OPENAI_API_KEY` and `OPENAI_MODEL` to use the live OpenAI Responses API with a model that supports structured outputs. Choose a model available to your account. Credentials stay on the server; never use a `NEXT_PUBLIC_` key variable. Restart the server after changing configuration.
+
+Unset AI configuration keeps all manual functionality available and preserves submitted conversation text. Failed AI responses offer retry. Structured outputs are checked against strict task schemas, repaired once if invalid, and rejected completely if still invalid. Requests have a 25-second provider timeout per attempt. The live adapter sends project context and recent conversation to OpenAI with response storage disabled; prompts and raw provider errors are not logged.

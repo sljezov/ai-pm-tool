@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -8,12 +8,13 @@ let directory: string;
 let server: ChildProcess | undefined;
 let databaseUrl: string;
 let logs = "";
+let aiProvider = "fixture";
 const origin = "http://127.0.0.1:3100";
 
 async function startServer() {
   logs = "";
   server = spawn(process.execPath, [resolve("node_modules/next/dist/bin/next"), "start", "--hostname", "127.0.0.1", "--port", "3100"], {
-    env: { ...process.env, DATABASE_URL: databaseUrl, NEXT_TELEMETRY_DISABLED: "1" }, stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, DATABASE_URL: databaseUrl, NEXT_TELEMETRY_DISABLED: "1", AI_PROVIDER: aiProvider, OPENAI_API_KEY: "e2e-provider-key-never-public", OPENAI_MODEL: "" }, stdio: ["ignore", "pipe", "pipe"],
   });
   server.stdout?.on("data", chunk => { logs += chunk.toString(); });
   server.stderr?.on("data", chunk => { logs += chunk.toString(); });
@@ -37,7 +38,9 @@ async function stopServer() {
 
 test.beforeAll(async () => {
   directory = await mkdtemp(join(tmpdir(), "ai-pm-browser-"));
-  databaseUrl = `file:${join(directory, "e2e.db")}`;
+  const databasePath = join(directory, "e2e.db");
+  await writeFile(databasePath, "");
+  databaseUrl = `file:${databasePath}`;
   execFileSync(process.execPath, [resolve("node_modules/prisma/build/index.js"), "migrate", "deploy"], { env: { ...process.env, DATABASE_URL: databaseUrl }, stdio: "pipe" });
   await startServer();
 });
@@ -160,4 +163,81 @@ test("manual mockup editing, safe rendering, history and restore persist", async
   const before = JSON.stringify(current);
   expect((await request.post(`/api/projects/${project.id}/backlog`, { data: { type: "save_mockup", storyId: state.stories[0].id, name: "Unsafe", document: { schemaVersion: 1, screenName: "Unsafe", elements: [{ id: "script", type: "text", props: { onClick: "alert(1)" } }] } } })).status()).toBe(400);
   expect(JSON.stringify(await (await request.get(`/api/projects/${project.id}/backlog`)).json())).toBe(before);
+});
+
+
+test("guided fixture conversation choices, Other, Skip, multi-selection and roles persist", async ({ page, request }, testInfo) => {
+  const created = await request.post("/api/projects", { data: { name: "AI spordiklubi", description: "Spordiklubi rakendus" } });
+  const project = await created.json();
+  await page.goto(`/projects/${project.id}`);
+  await expect(page.getByText("Näidis-AI · fixture")).toBeVisible();
+  await page.getByLabel("Sinu idee või täpsustus").fill("Soovin spordiklubile rakendust.");
+  await page.getByRole("button", { name: "Saada sõnum" }).click();
+  await expect(page.getByRole("group", { name: "Millist põhiprobleemi soovid kõigepealt lahendada?" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Muu (kirjutan ise)" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Jäta vahele" })).toBeVisible();
+  await page.getByRole("button", { name: "Treeningute broneerimine" }).click();
+  await expect(page.getByRole("heading", { name: "Rollide ettepanek", exact: true })).toBeVisible();
+  await expect(page.getByText("Treener", { exact: true })).toBeVisible();
+  let backlog = await (await request.get(`/api/projects/${project.id}/backlog`)).json();
+  expect(backlog.stories).toHaveLength(0);
+  await page.getByRole("button", { name: "Täpsusta ideed", exact: true }).click();
+  const group = page.getByRole("group", { name: "Kes kasutab lahendust kõige rohkem?" });
+  await group.getByRole("button", { name: "Liikmed või kliendid" }).click();
+  await group.getByRole("button", { name: "Töötajad", exact: true }).click();
+  await expect(group.getByRole("button", { name: "Töötajad", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await group.getByRole("button", { name: "Saada vastus" }).click();
+  await expect(page.getByText(/Liikmed või kliendid, Töötajad/, { exact: false })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Rollide ettepanek", exact: true })).toHaveCount(2);
+  await page.screenshot({ path: testInfo.outputPath("conversation-desktop.png"), fullPage: true });
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Rollide ettepanek", exact: true })).toHaveCount(2);
+  await page.getByLabel("Sinu idee või täpsustus").fill("Treener on peamine kasutaja.");
+  await page.getByRole("button", { name: "Saada sõnum" }).click();
+  await expect(page.getByRole("heading", { name: "Rollide ettepanek", exact: true })).toHaveCount(3);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: testInfo.outputPath("conversation-mobile.png"), fullPage: true });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  backlog = await (await request.get(`/api/projects/${project.id}/backlog`)).json();
+  expect(backlog.stories).toHaveLength(0);
+  for (const skip of [false, true]) {
+    const response = await request.post("/api/projects", { data: { name: skip ? "Skip flow" : "Other flow" } });
+    const p = await response.json(); await page.goto(`/projects/${p.id}`);
+    await page.getByLabel("Sinu idee või täpsustus").fill("Uus idee"); await page.getByRole("button", { name: "Saada sõnum" }).click();
+    if (skip) await page.getByRole("button", { name: "Jäta vahele" }).click();
+    else { await page.getByRole("button", { name: "Muu (kirjutan ise)" }).click(); await page.getByLabel("Muu vastus", { exact: true }).fill("<script>literal answer</script>"); await page.getByRole("button", { name: "Saada vastus" }).click(); }
+    await expect(page.getByRole("heading", { name: "Rollide ettepanek", exact: true })).toBeVisible();
+    const history = await (await request.get(`/api/projects/${p.id}/conversation`)).json();
+    expect(history.messages[2].content).toContain(skip ? "Jäta vahele" : "Muu: <script>literal answer</script>");
+    await expect(page.locator(".conversation script")).toHaveCount(0);
+  }
+});
+
+test("unavailable AI saves messages, safe retry and manual backlog remain usable", async ({ page, request }) => {
+  await stopServer(); aiProvider = "unavailable"; await startServer();
+  try {
+    const response = await request.post("/api/projects", { data: { name: "AI unavailable" } }); const p = await response.json();
+    await page.goto(`/projects/${p.id}`);
+    await expect(page.getByText("AI pole seadistatud", { exact: true })).toBeVisible();
+    await page.getByLabel("Sinu idee või täpsustus").fill("Sõnum peab säilima"); await page.getByRole("button", { name: "Saada sõnum" }).click();
+    await expect(page.getByRole("button", { name: "Proovi vastust uuesti" })).toBeVisible();
+    await page.getByRole("button", { name: "Proovi vastust uuesti" }).click();
+    await expect(page.getByRole("button", { name: "Proovi vastust uuesti" })).toBeEnabled();
+    let history = await (await request.get(`/api/projects/${p.id}/conversation`)).json();
+    expect(history.messages.filter((m: { role: string }) => m.role === "user")).toHaveLength(1);
+    expect(JSON.stringify(history)).not.toMatch(/e2e-provider-key-never-public|OPENAI_API_KEY|Authorization|stack|Bearer/);
+    expect(await page.content()).not.toContain("e2e-provider-key-never-public");
+    expect((await request.post(`/api/projects/${p.id}/conversation`, { data: { kind: "text", text: "x", task: "execute_script" } })).status()).toBe(400);
+    await page.getByRole("button", { name: "Uus lugu", exact: true }).click();
+    const form = page.locator(".story-create");
+    await form.getByLabel("Roll", { exact: true }).fill("Liige"); await form.getByLabel("Tegevus", { exact: true }).fill("broneerida"); await form.getByLabel("Kasu", { exact: true }).fill("saan treenida");
+    await form.getByRole("button", { name: "Lisa lugu", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Liigena soovin broneerida, et saan treenida." })).toBeVisible();
+    await page.reload(); await expect(page.getByText("Sõnum peab säilima", { exact: true })).toBeVisible();
+    await stopServer(); aiProvider = "fixture"; await startServer();
+    await page.reload(); await page.getByRole("button", { name: "Proovi vastust uuesti" }).click();
+    await expect(page.getByRole("group", { name: "Millist põhiprobleemi soovid kõigepealt lahendada?" })).toBeVisible();
+    history = await (await request.get(`/api/projects/${p.id}/conversation`)).json();
+    expect(history.messages.filter((m: { role: string }) => m.role === "user")).toHaveLength(1);
+  } finally { if (aiProvider !== "fixture") { await stopServer(); aiProvider = "fixture"; await startServer(); } }
 });

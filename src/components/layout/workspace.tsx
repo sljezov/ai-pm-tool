@@ -1,12 +1,14 @@
 "use client";
 import { Backlog, type BacklogData } from "@/components/backlog/backlog";
 import Link from "next/link";
+import { Conversation } from "@/components/conversation/conversation";
+import type { ConversationData } from "@/domain/ai/contracts";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { stages, stageLabels, stageDescriptions, type ProjectStage } from "@/domain/stages/stages";
 
 type Project = { id: string; name: string; description: string; currentStage: ProjectStage; recommendedNextStage: ProjectStage; storyCount: number };
-export function Workspace({ project, backlog }: { project: Project; backlog: BacklogData }) {
+export function Workspace({ project, backlog, conversation }: { project: Project; backlog: BacklogData; conversation: ConversationData }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -29,7 +31,7 @@ export function Workspace({ project, backlog }: { project: Project; backlog: Bac
       <nav id="panel-stages" className={`stage-nav mobile-${tab === "stages" ? "visible" : "hidden"}`} aria-label="Projekti etapid"><p className="eyebrow">PROJEKTI TEEKOND</p>{stages.map((stage, index) => <button key={stage} className={stage === project.currentStage ? "stage-item active" : "stage-item"} aria-current={stage === project.currentStage ? "step" : undefined} disabled={busy} onClick={() => navigate(stage)}><span className="stage-number">{String(index + 1).padStart(2, "0")}</span><span>{stageLabels[stage]}</span></button>)}<p className="nav-note">Võid etappe vabalt valida ja nende juurde tagasi tulla.</p></nav>
       <section id="panel-work" className={`work-panel mobile-${tab === "work" ? "visible" : "hidden"}`} aria-labelledby="stage-heading"><p className="eyebrow">ETAPP {String(stages.indexOf(project.currentStage) + 1).padStart(2, "0")}</p><h2 id="stage-heading">{stageLabels[project.currentStage]}</h2><p className="muted">{stageDescriptions[project.currentStage]}</p>
         <div className="idea-note"><span className="eyebrow">PROJEKTI IDEE</span><p>{project.description || "Sellel projektil pole veel kirjeldust."}</p></div>
-        <div className="foundation-notice"><span aria-hidden="true">◇</span><h3>Tööruum on valmis.</h3><p>Projekt ja valitud etapp on salvestatud. Backlogi saad käsitsi hallata parempoolses paneelis. Vestlus ja AI ettepanekud lisanduvad järgmistes ehitusetappides.</p></div>
+        <Conversation key={project.id} projectId={project.id} initial={conversation} />
         <div className="next-step"><span>Soovitatud järgmine etapp</span><button className="text-button" onClick={() => navigate(project.recommendedNextStage)} disabled={busy}>{stageLabels[project.recommendedNextStage]} <span aria-hidden="true">→</span></button></div>
       </section>
       <aside id="panel-backlog" className={`backlog-panel mobile-${tab === "backlog" ? "visible" : "hidden"}`}><Backlog projectId={project.id} initial={backlog} /></aside>

@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -57,6 +57,15 @@ describe("validated AI boundary", () => {
     fetcher.mockImplementationOnce(async () => new Response("secret-test-key provider trace", { status: 401 }));
     await expect(generateValidated(new OpenAiProvider(), "clarify_idea", {})).rejects.toBeInstanceOf(AiUnavailableError);
   });
+  it("treats malformed successful provider envelopes as repairable invalid output", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "secret-test-key"); vi.stubEnv("OPENAI_MODEL", "configured-test-model");
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response("not-json", { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ status: "completed", output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify(await valid()) }] }] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetcher);
+    await expect(generateValidated(new OpenAiProvider(), "clarify_idea", {})).resolves.toMatchObject({ payload: { questions: expect.any(Array) } });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
   it("rejects already-answered questions after one repair", async () => {
     const generator = vi.fn(async () => await valid());
     await expect(generateValidated({ generateStructured: generator as AiProvider["generateStructured"] }, "clarify_idea", { answeredQuestionIds: ["goal"] })).rejects.toBeInstanceOf(AiInvalidOutputError);
@@ -69,7 +78,8 @@ describe("persistent guided conversation", () => {
   let client: ReturnType<typeof createDatabaseClient>;
   let databaseUrl: string;
   beforeAll(async () => {
-    directory = await mkdtemp(join(tmpdir(), "ai-pm-conversation-")); databaseUrl = `file:${join(directory, "test.db")}`;
+    directory = await mkdtemp(join(tmpdir(), "ai-pm-conversation-"));
+    const databasePath = join(directory, "test.db"); await writeFile(databasePath, ""); databaseUrl = `file:${databasePath}`;
     execFileSync(process.execPath, [resolve("node_modules/prisma/build/index.js"), "migrate", "deploy"], { env: { ...process.env, DATABASE_URL: databaseUrl }, stdio: "pipe" }); client = createDatabaseClient(databaseUrl);
   }, 30_000);
   afterAll(async () => { await client?.$disconnect(); if (directory) await rm(directory, { recursive: true, force: true }); });
