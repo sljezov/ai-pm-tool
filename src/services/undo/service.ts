@@ -2,12 +2,15 @@ import "server-only";
 import type { Prisma } from "@/generated/prisma/client";
 import type { BacklogSnapshot } from "@/services/stories/service";
 
-// Full WP-02 snapshot: archived stories, child records, order and project pointers.
-// Mockup history is deliberately untouched: WP-02 never changes it, and versions are append-only.
+import { appendMockup } from "@/services/mockups/service";
+import { emptyMockup } from "@/domain/mockup/document";
 export async function restoreBacklogSnapshot(tx: Prisma.TransactionClient, projectId: string, snapshot: BacklogSnapshot) {
   const savedIds = snapshot.stories.map(story => story.id);
   await tx.story.updateMany({ where: { projectId, id: { notIn: savedIds } }, data: { archivedAt: new Date() } });
   for (const story of snapshot.stories) {
+    const current = await tx.mockupVersion.findFirst({ where: { storyId: story.id }, orderBy: { version: "desc" } });
+    const saved = story.mockupVersions[0];
+    if (current?.id !== saved?.id) await appendMockup(tx, story.id, saved?.name ?? "Mockup eemaldatud", saved ? JSON.parse(saved.structureJson) : emptyMockup);
     const { criteria, openQuestions, mockupVersions: _mockups, ...fields } = story; void _mockups;
     const data = { ...fields, createdAt: new Date(fields.createdAt), updatedAt: new Date(fields.updatedAt), archivedAt: fields.archivedAt ? new Date(fields.archivedAt) : null };
     await tx.story.update({ where: { id: story.id, projectId }, data });

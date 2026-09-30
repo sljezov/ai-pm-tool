@@ -12,7 +12,7 @@ export function calculateReadiness(story: ReadinessStory) {
     const check = checkCriterion(criterion.text, refs ?? [], ids);
     if (check.status !== "pass") issues.push({ code: "criterion_validation", area: "criteria", message: `Kriteerium ${index + 1}: ${check.messages.map(item => item.message).join(" ")}` });
   });
-  if (story.requiresMockup && !story.mockupVersions.length) issues.push({ code: "mockup_required", area: "mockup", message: "Kasutajaliidese lugu vajab mockup'i (lisandub järgmises ehitusetapis)." });
+  if (story.requiresMockup && !ids.length) issues.push({ code: "mockup_required", area: "mockup", message: "Kasutajaliidese lugu vajab mockup'i." });
   if (story.openQuestions.some(question => !question.resolvedAt)) issues.push({ code: "open_questions", area: "questions", message: "Lahenda kõik avatud küsimused." });
   return { ready: issues.length === 0, issues };
 }

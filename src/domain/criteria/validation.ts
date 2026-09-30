@@ -1,17 +1,9 @@
+import { parseMockup, type MockupElement } from "@/domain/mockup/document";
 export type CriterionCheck = { status: "pass" | "warning" | "fail"; messages: { code: string; message: string }[] };
 export function mockupElementIds(structure: string | undefined): string[] {
-  if (!structure) return [];
-  try {
-    const ids: string[] = [];
-    const walk = (elements: unknown, depth = 0) => {
-      if (!Array.isArray(elements) || depth > 30) return;
-      for (const element of elements) if (element && typeof element === "object") {
-        if (typeof element.id === "string") ids.push(element.id);
-        walk(element.children, depth + 1);
-      }
-    };
-    walk(JSON.parse(structure).elements); return ids;
-  } catch { return []; }
+  const document = parseMockup(structure); const ids: string[] = [];
+  const walk = (elements: MockupElement[]) => { for (const element of elements) { ids.push(element.id); walk(element.children ?? []); } };
+  if (document) walk(document.elements); return ids;
 }
 export function checkCriterion(text: string, references: string[] = [], availableIds: string[] = []): CriterionCheck {
   const messages: CriterionCheck["messages"] = [];

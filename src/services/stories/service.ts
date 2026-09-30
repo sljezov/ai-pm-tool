@@ -4,6 +4,7 @@ import { projectIdSchema } from "@/lib/validation/projects";
 import { backlogCommandSchema, BacklogError } from "@/lib/validation/backlog";
 import { checkCriterion, mockupElementIds, parseCriterionReferences } from "@/domain/criteria/validation";
 import { calculateReadiness } from "@/domain/readiness/readiness";
+import { appendMockup } from "@/services/mockups/service";
 import { restoreBacklogSnapshot } from "@/services/undo/service";
 
 export const storyInclude = { criteria: { orderBy: { position: "asc" as const } }, openQuestions: { orderBy: [{ createdAt: "asc" as const }, { id: "asc" as const }] }, mockupVersions: { orderBy: { version: "desc" as const } } };
@@ -93,6 +94,11 @@ export function storyService(client: PrismaClient) {
           if (command.type === "create_criterion") await tx.acceptanceCriterion.create({ data: { ...data, storyId: story.id, position: story.criteria.length } });
           else await tx.acceptanceCriterion.update({ where: { id: command.criterionId }, data });
         }
+        changedStoryId = story.id;
+      } else if (story && (command.type === "save_mockup" || command.type === "restore_mockup")) {
+        const saved = command.type === "restore_mockup" ? story.mockupVersions.find(item => item.id === command.mockupVersionId) : undefined;
+        if (command.type === "restore_mockup" && !saved) throw new BacklogError("Mockup-versiooni ei leitud sellest loost.", 404);
+        await appendMockup(tx, story.id, command.type === "save_mockup" ? command.name : saved!.name, command.type === "save_mockup" ? command.document : JSON.parse(saved!.structureJson));
         changedStoryId = story.id;
       } else if (story && ["create_question", "update_question", "delete_question"].includes(command.type)) {
         if ("questionId" in command && !story.openQuestions.some(item => item.id === command.questionId)) throw new BacklogError("Küsimust ei leitud sellest loost.", 404);

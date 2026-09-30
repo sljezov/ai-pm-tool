@@ -7,6 +7,7 @@ import { createDatabaseClient } from "@/lib/db/client";
 import { storyService } from "@/services/stories/service";
 import { checkCriterion } from "@/domain/criteria/validation";
 import { calculateReadiness } from "@/domain/readiness/readiness";
+import { mockupFixtures } from "@/domain/mockup/document";
 const input = { role: "Liige", action: "broneerida treeningu", benefit: "koht oleks tagatud", status: "idea", size: null, requiresMockup: false };
 describe("manual backlog invariants", () => {
  let directory: string; let client: ReturnType<typeof createDatabaseClient>;
@@ -70,4 +71,23 @@ describe("manual backlog invariants", () => {
   expect(calculateReadiness(base).ready).toBe(false);
   expect(calculateReadiness({ ...base, criteria: base.criteria.map(c => ({ ...c, mockupElementIdsJson: 'null' })) }).ready).toBe(false);
  });
+ it("keeps mockup history append-only, scopes restores, and rechecks ready references", async () => {
+  const { id, service } = await setup(); const other = await setup();
+  const storyId = (await service.mutate(id, { type: "create_story", ...input, requiresMockup: true })).stories[0].id;
+  let data = await service.mutate(id, { type: "save_mockup", storyId, name: "Broneerimine", document: mockupFixtures.booking }); const first = data.stories[0].mockupVersions[0];
+  await service.mutate(id, { type: "undo" }); data = await service.get(id); expect(data.stories[0].mockupVersions).toHaveLength(2); expect(data.stories[0].readiness.issues.some(i => i.code === "mockup_required")).toBe(true);
+  await service.mutate(id, { type: "restore_mockup", storyId, mockupVersionId: first.id });
+  for (let n = 0; n < 3; n++) await service.mutate(id, { type: "create_criterion", storyId, text: `Nupp kinnitab broneeringu ${n}.`, mockupElementIds: ["book"] });
+  data = await service.mutate(id, { type: "update_story", storyId, ...input, requiresMockup: true, status: "ready_for_development" }); expect(data.stories[0].readiness.ready).toBe(true);
+  const previous = data.stories[0];
+  data = await service.mutate(id, { type: "save_mockup", storyId, name: "Ülevaade", document: mockupFixtures.overview }); expect(data.stories[0].status).toBe("needs_clarification"); expect(data.stories[0].criteria[0].validationStatus).toBe("fail");
+  data = await service.mutate(id, { type: "undo" }); expect(data.stories[0].status).toBe("ready_for_development"); expect(data.stories[0].readiness.ready).toBe(true); expect(data.stories[0].mockupVersions[0].structureJson).toBe(previous.mockupVersions[0].structureJson); expect(data.stories[0].mockupVersions).toHaveLength(5);
+  expect(await client.mockupVersion.findUnique({ where: { id: first.id } })).toEqual(first);
+  const otherId = (await service.mutate(other.id, { type: "create_story", ...input })).stories[0].id;
+  await expect(service.mutate(id, { type: "save_mockup", storyId: otherId, name: "Other", document: mockupFixtures.booking })).rejects.toMatchObject({ status: 404 });
+  await expect(service.mutate(other.id, { type: "restore_mockup", storyId: otherId, mockupVersionId: first.id })).rejects.toMatchObject({ status: 404 });
+  const count = await client.mockupVersion.count();
+  await expect(service.mutate(id, { type: "save_mockup", storyId, name: "Unsafe", document: { ...mockupFixtures.booking, html: "<script/>" } })).rejects.toThrow(); expect(await client.mockupVersion.count()).toBe(count);
+ });
+
 });
