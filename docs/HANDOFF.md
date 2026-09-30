@@ -2,7 +2,7 @@
 
 ## completed work package
 
-WP-09 — recovery, continuity and product hardening. WP-00 through WP-08 remain passing.
+WP-10 — documentation and demonstration package. WP-00 through WP-10 are accepted.
 
 ## implementation convention for every agent
 
@@ -14,64 +14,67 @@ WP-09 — recovery, continuity and product hardening. WP-00 through WP-08 remain
 
 ## implemented
 
-- The recommended next stage is derived from persisted roles, active stories, selected story, criteria, mockups and still-effective applied proposals. Opening a project reconciles the stored recommendation instead of trusting stale mutation-specific values.
-- Reopened projects show a context-aware `Jätka siit` card. It links to the recommended stage while preserving free non-linear stage navigation.
-- Backlog mutations and proposal confirmations accept project-scoped idempotency keys. The key is claimed and completed in the same transaction as the domain mutation, so a repeated request does not duplicate stories, criteria, mockups or proposal effects.
-- Browser mutation paths generate idempotency keys and use synchronous ref guards in addition to disabled/loading states. Concurrent key collisions return a safe conflict.
-- AI submissions persist request execution state and their user-message link before provider work. Completed requests deduplicate; failed or lease-expired requests reuse the saved message on retry.
-- Conversation reads recover both keyed and legacy orphaned `processing` messages after a 60-second lease. Recovery exposes the existing retry control rather than leaving a permanent spinner.
-- Provider calls have a bounded timeout in addition to the live adapter's abort timeout. Malformed structured output is still repaired once and then fails safely.
-- Workspace tabs support left/right keyboard movement, correct tab focus state, associated tab panels and responsive single-panel behavior. Backlog, project creation and conversation expose busy/status states; route loading and error boundaries now explain recovery clearly.
-- The full fixture-AI browser suite covers restart persistence, mobile layouts, manual flows, proposal flows, prototype/refinement, grooming, unavailable AI, repeated mutation keys and a correct grooming resume recommendation.
-- README includes a live-provider smoke-test procedure. The deterministic suite remains fixture-based.
+- README now provides evaluator requirements, setup, environment-variable explanations, validation, production start, troubleshooting and links to every evaluation artifact.
+- The one-page usage scenario follows a product manager from a vague sports-club idea through reviewed stories, a prototype, a VAT refinement, grooming, readiness and persisted resume.
+- The development backlog records WP-00 through WP-10 in dependency order, explains that order, places the submission MVP line after WP-10 and separates optional WP-11 candidates.
+- Feature status distinguishes working, intentionally partial and not implemented scope. Known AI limitations cover fixture behavior, live variability, context, validation, timeouts, isolation, privacy and low-fidelity mockups.
+- The 5–10 minute fixture-AI demonstration script covers every mandatory evaluation action and includes preparation, timing and visible proof points.
+- The final security review records verified controls, dependency advisories, residual risks and operating constraints. The final acceptance matrix maps requirements to implementation and automated evidence.
+- Fresh SQLite setup is reliable: the migration script creates only the configured empty SQLite file before Prisma applies migrations, Prisma CLI and runtime resolve the default relative path to the same repository-root location, and the seed avoids `tsx` CLI IPC.
 
 ## important files
 
-- `src/domain/stages/recommendation.ts` — deterministic recommendation rules.
-- `src/services/projects/recommendation.ts` — persisted-state query and recommendation reconciliation.
-- `src/services/requests/idempotency.ts` — request-key validation and transactional claim/completion.
-- `src/services/ai-orchestration/service.ts` — external-request lifecycle, lease recovery and retry continuity.
-- `src/services/stories/service.ts`, `src/services/proposals/workflow.ts` — idempotency inside existing project-scoped transactions.
-- `src/components/layout/workspace.tsx` — resume card and accessible responsive tabs.
-- `tests/stages.test.ts`, `tests/backlog.test.ts`, `tests/ai.test.ts`, `tests/e2e/projects.spec.ts` — recommendation, deduplication, recovery and acceptance coverage.
+- `README.md` — complete setup, configuration, troubleshooting, architecture and evaluation entry point.
+- `docs/USAGE_SCENARIO.md` — one-page evaluator walkthrough.
+- `docs/DEMO_SCRIPT.md` — timed repeatable demonstration.
+- `docs/DEVELOPMENT_BACKLOG.md` — ordered backlog, rationale and MVP line.
+- `docs/FEATURE_STATUS.md` — working, partial and excluded capability matrix.
+- `docs/AI_LIMITATIONS.md` — model, provider, fixture and privacy limitations.
+- `docs/SECURITY_REVIEW.md` — final security findings and residual risk.
+- `docs/ACCEPTANCE_MATRIX.md` — mandatory-flow traceability and clean-checkout commands.
+- `scripts/ensure-sqlite-file.mjs`, `prisma.config.ts`, `package.json` — portable clean SQLite migration and seed path.
 
 ## database changes
 
-- Migration `20260930180500_request_idempotency` adds `RequestExecution`.
-- A request execution stores a project-scoped unique key, scope, lifecycle status, optional linked resource, timestamps and completion time.
-- Deleting a project cascades its request-execution records. The index on project/status/update time supports interrupted-request recovery.
+- No schema or migration changed.
+- `npm run db:migrate` now ensures the configured local SQLite file and parent directory exist before `prisma migrate deploy`. It does nothing for non-`file:` URLs.
+- Relative SQLite configuration is normalized against the repository working directory for Prisma CLI, matching the application adapter and seed behavior.
 
 ## commands run
 
-- Baseline `npm run lint`, `npm run typecheck`, `npm test` and `npm run build` passed with the WP-08 state: 46 tests across 5 files.
-- Final `npm run lint` — passed with no errors or warnings.
-- Final `npm run typecheck` — passed.
-- Final `npm test` — passed: 55 tests across 6 files.
-- Final `npm run build` — passed.
-- Final approved `npm run test:e2e` — passed all 10 Chromium scenarios.
-- The first sandboxed e2e attempt could not bind port 3100 (`EPERM`); the required approved rerun passed.
+- Baseline `npm run lint` and `npm run typecheck` — passed.
+- Baseline `npm test` — passed: 55 tests across 6 files.
+- `npm audit --omit=dev` — completed; reports four high-severity advisories in the Prisma CLI dependency graph. The only automatic fix is a breaking Prisma 6 downgrade, so it was not applied.
+- Tracked-file credential-pattern scan — passed with no matches.
+- Fresh-checkout `npm ci` — passed: 552 packages installed; the audit summary repeated the four advisories.
+- Fresh-checkout `cp .env.example .env`, `npm run db:migrate`, `npm run db:seed` — passed; all three migrations applied and the repeatable sample project was created.
+- Fresh-checkout `npm run lint` — passed with no errors or warnings.
+- Fresh-checkout `npm run typecheck` — passed.
+- Fresh-checkout `npm test` — passed: 55 tests across 6 files.
+- Fresh-checkout `npm run build` — passed.
+- Fresh-checkout sandboxed `npm run test:e2e` — could not bind port 3100 (`EPERM`).
+- Fresh-checkout approved `npm run test:e2e` — passed all 10 Chromium scenarios.
 - Final `git diff --check` — passed.
-- Live-provider smoke test not run: no live model or credentials were configured. README now contains the exact optional procedure.
 
 ## known issues
 
-- Large conversation histories still render in full; provider context remains bounded to 12 recent relevant turns.
-- Idempotency receipts are retained for the life of the project. This is intentionally simple for the local MVP; a long-running production service would add retention cleanup.
-- The 60-second interrupted-request lease assumes provider work completes within its 30-second orchestration timeout. The OpenAI adapter aborts its HTTP request after 25 seconds.
-- Fixture review detects exact normalized duplicate wording rather than semantic similarity.
-- Repair editing uses validated structured JSON for full story/criterion/mockup changes; split and merge have dedicated field controls.
-- Existing npm audit findings remain: four high-severity development-only Prisma CLI entries. No dependencies changed.
+- Four high-severity `npm audit` findings remain through the Prisma CLI graph (`deepmerge-ts` and `mysql2`). The application uses SQLite and not the affected MySQL paths. Upgrade when Prisma publishes a compatible fix; do not apply the suggested breaking downgrade blindly.
+- There is no authentication, authorization or rate limiter. This is a trusted local single-user application and must not be exposed as a public shared service.
+- Local SQLite and `.env` data are not encrypted at rest; host filesystem controls are responsible for protection.
+- Live AI sends task context to OpenAI, remains model/account dependent and is not part of deterministic acceptance. Fixture AI is scripted and exact-duplicate grooming is not semantic.
+- Large conversation histories render in full; provider context remains bounded to recent relevant turns.
+- Idempotency receipts remain for the life of a project. A long-running production service would need retention cleanup.
+- No external penetration test or formal WCAG audit was performed.
 
 ## decisions or spec deviations
 
-- No contract-level deviations.
-- Recommendation is based on durable artifacts, not conversation replay. An applied refinement counts only while the selected story version remains newer than the proposal base version, so undo removes its effect from the recommendation.
-- Requests without an idempotency header remain supported for compatibility and direct service tests; all first-party browser mutation paths send a key.
-- A duplicate request that already completed returns current persisted state. A same-key request still processing or reused for another scope returns a safe conflict.
+- No product-contract deviation.
+- Evaluator and completion records remain in dedicated docs; README stays project-level and English as required by AGENTS.md.
+- The setup hardening pre-creates an empty SQLite file because Prisma 7's schema engine returned a generic error while creating a new file in the validation environment. Prisma remains solely responsible for applying the schema and migrations.
+- Live-provider smoke testing was not run because no live model or credential was configured. The documented fixture flow and unavailable-provider recovery are fully automated; README contains the optional live procedure.
 
 ## next package starting point
 
-- Agent 10 starts WP-10: documentation and demonstration package.
-- Complete evaluator setup/troubleshooting, one-page usage scenario, development backlog with MVP line, feature-status matrix, known AI limitations, demo script, security review and final acceptance matrix.
-- Preserve state-derived recommendations, request idempotency, lease recovery, project-scoped transactions, immutable proposal sources and append-only mockup restoration.
-- Run the full clean-checkout validation suite, including migration deployment and all Chromium scenarios.
+- The mandatory submission scope is complete. Begin WP-11 only if an optional extension is explicitly selected.
+- Preserve explicit human confirmation, story-scoped mutation, atomic transactions, idempotency, append-only mockup history, deterministic fixture acceptance and the documented local-only security boundary.
+- Re-run the complete acceptance matrix after any optional feature and keep that feature independently removable.
