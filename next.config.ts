@@ -1,4 +1,4 @@
 import type { NextConfig } from "next";
 
-const config: NextConfig = {};
+const config: NextConfig = { turbopack: { root: process.cwd() } };
 export default config;
