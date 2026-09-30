@@ -1,0 +1,192 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+enum ProjectStage {
+  idea
+  roles
+  stories
+  priorities
+  prototype
+  refinements
+  grooming
+}
+
+enum StoryStatus {
+  idea
+  needs_clarification
+  reviewed
+  ready_for_development
+}
+
+enum Origin {
+  ai
+  manual
+}
+
+enum ProposalStatus {
+  pending
+  applied
+  rejected
+  superseded
+}
+
+enum ValidationStatus {
+  pass
+  warning
+  fail
+}
+
+enum MockupSource {
+  ai
+  manual
+  refinement
+}
+
+enum ConversationRole {
+  user
+  assistant
+  system_event
+}
+
+enum StorySize {
+  S
+  M
+  L
+}
+
+model Project {
+  id                      String       @id @default(cuid())
+  name                    String
+  description             String
+  currentStage            ProjectStage @default(idea)
+  recommendedNextStage    ProjectStage @default(idea)
+  selectedStoryId         String?
+  mvpBoundaryAfterStoryId  String?
+  createdAt               DateTime     @default(now())
+  updatedAt               DateTime     @updatedAt
+  roles                   ProjectRole[]
+  stories                 Story[]
+  messages                ConversationMessage[]
+  proposals               Proposal[]
+  changeEvents            ChangeEvent[]
+}
+
+model ProjectRole {
+  id        String  @id @default(cuid())
+  projectId String
+  name      String
+  isPrimary Boolean @default(false)
+  origin    Origin  @default(manual)
+  position  Int
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  @@index([projectId, position])
+}
+
+model Story {
+  id           String      @id @default(cuid())
+  projectId    String
+  role         String
+  action       String
+  benefit      String
+  status       StoryStatus @default(idea)
+  position     Int
+  size         StorySize?
+  origin       Origin      @default(manual)
+  version      Int         @default(1)
+  requiresMockup Boolean   @default(true)
+  archivedAt   DateTime?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  project      Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  criteria     AcceptanceCriterion[]
+  openQuestions OpenQuestion[]
+  mockupVersions MockupVersion[]
+  proposals    Proposal[]
+  @@index([projectId, archivedAt, position])
+}
+
+model AcceptanceCriterion {
+  id                     String @id @default(cuid())
+  storyId                String
+  text                   String
+  position               Int
+  origin                 Origin @default(manual)
+  validationStatus       ValidationStatus
+  validationMessagesJson String @default("[]")
+  mockupElementIdsJson    String @default("[]")
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+  story                  Story @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  @@index([storyId, position])
+}
+
+model OpenQuestion {
+  id         String @id @default(cuid())
+  storyId    String
+  text       String
+  resolvedAt DateTime?
+  createdAt  DateTime @default(now())
+  story      Story @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  @@index([storyId])
+}
+
+model MockupVersion {
+  id            String @id @default(cuid())
+  storyId       String
+  version       Int
+  name          String
+  structureJson String
+  source        MockupSource
+  createdAt     DateTime @default(now())
+  story         Story @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  @@unique([storyId, version])
+}
+
+model ConversationMessage {
+  id                    String @id @default(cuid())
+  projectId             String
+  role                  ConversationRole
+  messageType           String
+  content               String
+  structuredPayloadJson String?
+  createdAt             DateTime @default(now())
+  project               Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  @@index([projectId, createdAt])
+}
+
+model Proposal {
+  id                 String @id @default(cuid())
+  projectId          String
+  targetStoryId      String?
+  type               String
+  status             ProposalStatus @default(pending)
+  baseStoryVersion   Int?
+  inputText          String?
+  beforeSnapshotJson String?
+  afterSnapshotJson  String
+  createdAt          DateTime @default(now())
+  resolvedAt         DateTime?
+  project            Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  targetStory        Story? @relation(fields: [targetStoryId], references: [id], onDelete: SetNull)
+  @@index([projectId, status])
+}
+
+model ChangeEvent {
+  id                 String @id @default(cuid())
+  projectId          String
+  eventType          String
+  entityType         String
+  entityId           String
+  beforeSnapshotJson String
+  afterSnapshotJson  String
+  createdAt          DateTime @default(now())
+  undoneAt           DateTime?
+  project            Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  @@index([projectId, createdAt])
+}

@@ -1,0 +1,1 @@
+-- Empty baseline: product tables are introduced in WP-01.
