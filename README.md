@@ -29,6 +29,10 @@ npm run test:e2e
 
 For a production run, use `npm run build` followed by `npm start`.
 
+Browser tests use port 3100, launch and restart the production server, and migrate an isolated temporary SQLite database. Run the build first and leave that port free. Service tests also use an isolated temporary database. Neither suite changes your development project data.
+
+If setup fails, check your Node version, run `npm run db:generate`, and confirm migrations and runtime use the same database URL. If Playwright reports a missing executable, run `npx playwright install chromium`. The local demo seed can be rerun without overwriting an existing demo project.
+
 ## Architecture and scope
 
 Next.js App Router and React provide the interface. Validated route handlers call project services and repositories; only server code accesses Prisma and SQLite. The core database schema prepares the relationships for later work packages without implementing their workflows.
@@ -38,3 +42,5 @@ Project creation, listing, reopening, and non-linear stage navigation are implem
 The application is a single local workspace with no authentication. Do not expose it as a shared public service.
 
 See [implementation spec](docs/IMPLEMENTATION_SPEC.md) and [agent handoff](docs/HANDOFF.md).
+
+The foundation checks pass, including server-restart persistence. The current npm audit reports four high-severity entries in transitive Prisma development tooling; details and follow-up are recorded in the handoff.
