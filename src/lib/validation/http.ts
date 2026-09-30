@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
+import { BacklogError } from "@/lib/validation/backlog";
 import { Prisma } from "@/generated/prisma/client";
 
 export function apiError(error: unknown) {
+  if (error instanceof BacklogError) return NextResponse.json({ error: error.message, issues: error.issues }, { status: error.status });
   if (error instanceof ZodError) return NextResponse.json({ error: error.issues[0]?.message ?? "Vigased andmed." }, { status: 400 });
   if (error instanceof SyntaxError) return NextResponse.json({ error: "Päringu sisu peab olema korrektne JSON." }, { status: 400 });
   if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2025") {
