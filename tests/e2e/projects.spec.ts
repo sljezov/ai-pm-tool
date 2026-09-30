@@ -88,3 +88,45 @@ test("API validation returns useful errors without mutating state", async ({ req
   expect((await request.patch("/api/projects/missing", { data: { currentStage: "roles" } })).status()).toBe(404);
   expect(await (await request.get("/api/projects")).json()).toEqual(before);
 });
+
+test("manual backlog, readiness, ordering, MVP and one-level undo work without AI", async ({ page, request }, testInfo) => {
+  const created = await request.post("/api/projects", { data: { name: "Käsitsi backlog" } }); const project = await created.json();
+  await page.goto(`/projects/${project.id}`);
+  const backlog = page.locator("#panel-backlog");
+  async function addStory(action: string) {
+    await backlog.getByRole("button", { name: "Uus lugu", exact: true }).click();
+    const form = backlog.locator(".story-create");
+    await form.getByLabel("Roll", { exact: true }).fill("Liige"); await form.getByLabel("Tegevus", { exact: true }).fill(action); await form.getByLabel("Kasu", { exact: true }).fill("koht oleks tagatud");
+    await form.getByLabel("Lugu vajab kasutajaliidest").uncheck(); await form.getByRole("button", { name: "Lisa lugu", exact: true }).click();
+    await expect(backlog.getByRole("region", { name: "Valitud kasutajalugu" })).toBeVisible();
+  }
+  await addStory("broneerida treeningu");
+  let inspector = backlog.getByRole("region", { name: "Valitud kasutajalugu" });
+  await inspector.getByLabel("Staatus", { exact: true }).selectOption("ready_for_development"); await inspector.getByRole("button", { name: "Salvesta lugu", exact: true }).click();
+  await expect(backlog.getByRole("alert")).toContainText("Lisa vähemalt kolm");
+  await expect(backlog.locator(".story-card")).toContainText("Idee");
+  for (const text of ["Teenus salvestab broneeringu.", "Teenus saadab kinnituse e-postiga.", "Teenus keeldub täis treeningu broneerimisest."]) {
+    await inspector.getByLabel("Uus kriteerium", { exact: true }).fill(text); await inspector.getByRole("button", { name: "Lisa kriteerium", exact: true }).click(); await expect(inspector.getByLabel("Uus kriteerium", { exact: true })).toHaveValue("");
+  }
+  await inspector.getByLabel("Staatus", { exact: true }).selectOption("ready_for_development"); await inspector.getByRole("button", { name: "Salvesta lugu", exact: true }).click(); await expect(backlog.locator(".story-card")).toContainText("Valmis arenduseks");
+  await inspector.getByLabel("Uus küsimus").fill("Kas käibemaks on hinnas?"); await inspector.getByRole("button", { name: "Lisa küsimus", exact: true }).click(); await expect(backlog.locator(".story-card")).toContainText("Vajab täpsustamist");
+  await backlog.getByRole("button", { name: "Võta tagasi", exact: true }).click(); await expect(backlog.locator(".story-card")).toContainText("Valmis arenduseks"); await expect(backlog.getByRole("button", { name: "Võta tagasi", exact: true })).toBeDisabled();
+  await addStory("muuta broneeringut");
+  await backlog.locator(".story-card").nth(0).getByRole("button", { name: "MVP piir siia" }).click(); await expect(backlog.locator(".mvp-line")).toBeVisible();
+  await backlog.getByRole("button", { name: "Liiguta lugu 2 üles" }).click(); await expect(backlog.locator(".story-card").nth(0)).toContainText("muuta broneeringut");
+  await backlog.locator(".story-card").nth(0).dragTo(backlog.locator(".story-card").nth(1)); await expect(backlog.locator(".story-card").nth(0)).toContainText("broneerida treeningu");
+  await backlog.locator(".story-title").nth(0).click(); inspector = backlog.getByRole("region", { name: "Valitud kasutajalugu" });
+  await inspector.getByLabel("Kriteeriumi tekst").nth(0).fill("Teenuse kasutamine on kiire ja mugav."); await inspector.getByRole("button", { name: "Salvesta kriteerium", exact: true }).nth(0).click(); await expect(inspector.getByText("Hoiatus", { exact: false }).first()).toBeVisible(); await expect(backlog.locator(".story-card").nth(0)).toContainText("Vajab täpsustamist");
+  await backlog.getByRole("button", { name: "Võta tagasi", exact: true }).click(); await expect(inspector.getByLabel("Kriteeriumi tekst").nth(0)).toHaveValue("Teenus salvestab broneeringu.");
+  await inspector.getByRole("button", { name: "Arhiveeri lugu" }).click(); await expect(backlog.locator(".mvp-line")).toHaveCount(0); await expect(backlog.getByRole("status")).toContainText("MVP piir eemaldati");
+  await backlog.getByRole("button", { name: "Võta tagasi", exact: true }).click(); await expect(backlog.locator(".story-card")).toHaveCount(2); await expect(backlog.locator(".mvp-line")).toBeVisible();
+  await page.reload(); await expect(backlog.getByRole("region", { name: "Valitud kasutajalugu" })).toBeVisible(); await expect(backlog.locator(".mvp-line")).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("manual-backlog-desktop.png"), fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 }); await page.getByRole("tab", { name: "Backlog" }).click();
+  await expect(inspector.getByLabel("Uus küsimus")).toBeVisible(); expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath("manual-backlog-mobile.png"), fullPage: true });
+  const other = await (await request.post("/api/projects", { data: { name: "Teine backlog" } })).json();
+  const state = await (await request.get(`/api/projects/${project.id}/backlog`)).json();
+  expect((await request.post(`/api/projects/${other.id}/backlog`, { data: { type: "select", storyId: state.stories[0].id } })).status()).toBe(404);
+  expect((await request.post(`/api/projects/${project.id}/backlog`, { data: { type: "reorder", storyIds: [state.stories[0].id, state.stories[0].id] } })).status()).toBe(400);
+});

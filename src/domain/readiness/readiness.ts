@@ -1,4 +1,4 @@
-import { checkCriterion, mockupElementIds } from "@/domain/criteria/validation";
+import { checkCriterion, mockupElementIds, parseCriterionReferences } from "@/domain/criteria/validation";
 export type ReadinessIssue = { code: string; area: "story" | "criteria" | "mockup" | "questions"; message: string };
 export type ReadinessStory = { role: string; action: string; benefit: string; requiresMockup: boolean; criteria: { text: string; mockupElementIdsJson: string }[]; openQuestions: { resolvedAt: unknown }[]; mockupVersions: { structureJson: string }[] };
 export function calculateReadiness(story: ReadinessStory) {
@@ -7,15 +7,9 @@ export function calculateReadiness(story: ReadinessStory) {
   if (story.criteria.length < 3) issues.push({ code: "criterion_count", area: "criteria", message: "Lisa vähemalt kolm vastuvõtukriteeriumi." });
   const ids = mockupElementIds(story.mockupVersions[0]?.structureJson);
   story.criteria.forEach((criterion, index) => {
-    let refs: string[] = [];
-    try {
-      const parsed: unknown = JSON.parse(criterion.mockupElementIdsJson);
-      if (!Array.isArray(parsed) || !parsed.every(id => typeof id === "string")) throw new Error("Invalid references");
-      refs = parsed;
-    } catch {
-      issues.push({ code: "invalid_references", area: "criteria", message: `Kriteerium ${index + 1}: mockup-viited on vigased.` });
-    }
-    const check = checkCriterion(criterion.text, refs, ids);
+    const refs = parseCriterionReferences(criterion.mockupElementIdsJson);
+    if (!refs) issues.push({ code: "invalid_references", area: "criteria", message: `Kriteerium ${index + 1}: mockup-viited on vigased.` });
+    const check = checkCriterion(criterion.text, refs ?? [], ids);
     if (check.status !== "pass") issues.push({ code: "criterion_validation", area: "criteria", message: `Kriteerium ${index + 1}: ${check.messages.map(item => item.message).join(" ")}` });
   });
   if (story.requiresMockup && !story.mockupVersions.length) issues.push({ code: "mockup_required", area: "mockup", message: "Kasutajaliidese lugu vajab mockup'i (lisandub järgmises ehitusetapis)." });

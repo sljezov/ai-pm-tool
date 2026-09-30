@@ -2,7 +2,7 @@ import "server-only";
 import type { Prisma, PrismaClient } from "@/generated/prisma/client";
 import { projectIdSchema } from "@/lib/validation/projects";
 import { backlogCommandSchema, BacklogError } from "@/lib/validation/backlog";
-import { checkCriterion, mockupElementIds } from "@/domain/criteria/validation";
+import { checkCriterion, mockupElementIds, parseCriterionReferences } from "@/domain/criteria/validation";
 import { calculateReadiness } from "@/domain/readiness/readiness";
 import { restoreBacklogSnapshot } from "@/services/undo/service";
 
@@ -27,7 +27,10 @@ export function storyService(client: PrismaClient) {
     const latest = await client.changeEvent.findFirst({ where: { projectId }, orderBy: { createdAt: "desc" } });
     return { ...snapshot, stories: snapshot.stories.filter(story => !story.archivedAt).map(story => {
       const ids = mockupElementIds(story.mockupVersions[0]?.structureJson);
-      return { ...story, criteria: story.criteria.map(criterion => ({ ...criterion, check: checkCriterion(criterion.text, JSON.parse(criterion.mockupElementIdsJson), ids) })), readiness: calculateReadiness(story) };
+      return { ...story, criteria: story.criteria.map(criterion => {
+        const refs = parseCriterionReferences(criterion.mockupElementIdsJson);
+        return { ...criterion, mockupElementIds: refs ?? [], check: refs ? checkCriterion(criterion.text, refs, ids) : { status: "fail" as const, messages: [{ code: "invalid_references", message: "Mockup-viited on vigased. Salvesta parandatud viited." }] } };
+      }), readiness: calculateReadiness(story) };
     }), canUndo: !!latest && !latest.undoneAt };
   }
   return { get, async mutate(projectId: string, input: unknown) {

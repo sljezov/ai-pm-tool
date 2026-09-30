@@ -24,3 +24,10 @@ export function checkCriterion(text: string, references: string[] = [], availabl
   if (/\b(nupp|vorm|väli|ekraan|menüü|vaade|tabel)\w*/iu.test(text) && references.length === 0) add("missing_mapping", "Seo kasutajaliidese tingimus mockup-elemendiga.");
   return { status: failed ? "fail" : messages.length ? "warning" : "pass", messages };
 }
+
+export function parseCriterionReferences(json: string): string[] | null {
+  try {
+    const parsed: unknown = JSON.parse(json);
+    return Array.isArray(parsed) && parsed.every(id => typeof id === "string") ? parsed : null;
+  } catch { return null; }
+}
