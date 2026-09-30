@@ -130,3 +130,34 @@ test("manual backlog, readiness, ordering, MVP and one-level undo work without A
   expect((await request.post(`/api/projects/${other.id}/backlog`, { data: { type: "select", storyId: state.stories[0].id } })).status()).toBe(404);
   expect((await request.post(`/api/projects/${project.id}/backlog`, { data: { type: "reorder", storyIds: [state.stories[0].id, state.stories[0].id] } })).status()).toBe(400);
 });
+
+
+test("manual mockup editing, safe rendering, history and restore persist", async ({ page, request }, testInfo) => {
+  const project = await (await request.post("/api/projects", { data: { name: "Mockupi ajalugu" } })).json();
+  const state = await (await request.post(`/api/projects/${project.id}/backlog`, { data: { type: "create_story", role: "Liige", action: "broneerida treeningu", benefit: "koht oleks tagatud", status: "idea", size: null, requiresMockup: true } })).json();
+  await page.goto(`/projects/${project.id}`);
+  const mockup = page.locator("#story-mockup");
+  await mockup.getByText("Mockupi käsitsi lisamine või muutmine", { exact: true }).click();
+  await mockup.getByRole("button", { name: "Salvesta uus mockup-versioon" }).click();
+  await expect(mockup.getByLabel("Versiooniajalugu")).toContainText("v1");
+  await expect(mockup.locator('[data-mockup-element-id="book"]').first()).toBeVisible();
+  await expect(mockup.getByRole("button", { name: "Kinnita broneering", exact: true }).first()).toBeDisabled();
+  await mockup.getByRole("button", { name: "Muuda seda versiooni", exact: true }).click();
+  await mockup.getByRole("button", { name: "Broneeringute ülevaade", exact: true }).click();
+  await mockup.getByRole("button", { name: "Salvesta uus mockup-versioon" }).click();
+  await expect(mockup.getByLabel("Versiooniajalugu")).toContainText("v2");
+  let current = await (await request.get(`/api/projects/${project.id}/backlog`)).json(); const first = current.stories[0].mockupVersions.find((v: { version: number }) => v.version === 1);
+  await mockup.getByLabel("Versiooniajalugu").selectOption(first.id);
+  await mockup.getByRole("button", { name: "Taasta uue versioonina" }).click();
+  await expect(mockup.getByLabel("Versiooniajalugu")).toContainText("v3");
+  await page.reload(); await expect(mockup.getByLabel("Versiooniajalugu")).toContainText("v3");
+  await page.screenshot({ path: testInfo.outputPath("mockup-desktop.png"), fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 }); await page.getByRole("tab", { name: "Backlog" }).click();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath("mockup-mobile.png"), fullPage: true });
+  current = await (await request.get(`/api/projects/${project.id}/backlog`)).json();
+  expect(current.stories[0].mockupVersions).toHaveLength(3);
+  const before = JSON.stringify(current);
+  expect((await request.post(`/api/projects/${project.id}/backlog`, { data: { type: "save_mockup", storyId: state.stories[0].id, name: "Unsafe", document: { schemaVersion: 1, screenName: "Unsafe", elements: [{ id: "script", type: "text", props: { onClick: "alert(1)" } }] } } })).status()).toBe(400);
+  expect(JSON.stringify(await (await request.get(`/api/projects/${project.id}/backlog`)).json())).toBe(before);
+});

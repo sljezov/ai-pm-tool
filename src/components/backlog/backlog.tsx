@@ -1,5 +1,7 @@
 "use client";
 import { useState, type FormEvent } from "react";
+import { MockupEditor } from "@/components/mockup/editor";
+import { mockupElementIds } from "@/domain/criteria/validation";
 import { useRouter } from "next/navigation";
 import type { storyService } from "@/services/stories/service";
 import type { ReadinessIssue } from "@/domain/readiness/readiness";
@@ -77,7 +79,7 @@ export function Backlog({ projectId, initial }: { projectId: string; initial: Ba
   <ol className="story-list">{data.stories.map((item, index) => <li key={item.id}>
    <article className={`story-card ${item.id === story?.id ? "selected" : ""}`} draggable={!busy} onDragStart={event => { setDragId(item.id); event.dataTransfer.setData("text/plain", item.id); event.dataTransfer.effectAllowed = "move"; }} onDragEnd={() => setDragId(null)} onDragOver={event => { if (dragId) event.preventDefault(); }} onDrop={event => { event.preventDefault(); if (dragId) move(dragId, index); setDragId(null); }}>
     <button className="story-title" disabled={busy} onClick={async () => { if (await mutate({ type: "select", storyId: item.id })) setCreating(false); }}>{index + 1}. {item.role}na soovin {item.action}, et {item.benefit}.</button>
-    <p className="story-meta">{statusLabels[item.status]} · {item.size ?? "Suurus määramata"} · {item.origin === "manual" ? "Käsitsi" : "AI"}<br />{item.criteria.length} kriteeriumi · {item.mockupVersions.length ? "Mockup olemas" : "Mockup puudub"} · {item.openQuestions.filter(q => !q.resolvedAt).length} avatud küsimust</p>
+    <p className="story-meta">{statusLabels[item.status]} · {item.size ?? "Suurus määramata"} · {item.origin === "manual" ? "Käsitsi" : "AI"}<br />{item.criteria.length} kriteeriumi · {mockupElementIds(item.mockupVersions[0]?.structureJson).length ? "Mockup olemas" : "Mockup puudub"} · {item.openQuestions.filter(q => !q.resolvedAt).length} avatud küsimust</p>
     <div className="actions"><button aria-label={`Liiguta lugu ${index + 1} üles`} disabled={busy || index === 0} onClick={() => move(item.id, index - 1)}>↑</button><button aria-label={`Liiguta lugu ${index + 1} alla`} disabled={busy || index === data.stories.length - 1} onClick={() => move(item.id, index + 1)}>↓</button><button disabled={busy} onClick={() => mutate({ type: "boundary", storyId: item.id })}>MVP piir siia</button></div>
    </article>{data.mvpBoundaryAfterStoryId === item.id && <div className="mvp-line"><strong>MVP piir</strong><button disabled={busy} onClick={() => mutate({ type: "boundary", storyId: null })}>Eemalda piir</button></div>}
   </li>)}</ol>
@@ -85,7 +87,7 @@ export function Backlog({ projectId, initial }: { projectId: string; initial: Ba
    <div id="story-story"><h3>Valitud kasutajalugu</h3><p className="muted">Versioon {story.version} · {story.origin === "manual" ? "Käsitsi loodud" : "AI loodud"}</p><StoryForm story={story} mutate={mutate} busy={busy} /></div>
    <details className="readiness" open><summary>Definition of Ready: {story.readiness.ready ? "tingimused täidetud" : "vajab tööd"}</summary>{story.readiness.issues.length > 0 && <ul>{story.readiness.issues.map((issue, i) => <li key={i}><a href={`#${areaId(issue.area)}`}>{issue.message}</a></li>)}</ul>}</details>
    <section id="story-criteria"><h3>Vastuvõtukriteeriumid</h3>{story.criteria.map((criterion, i) => <div className="child-card" key={criterion.id}><p className={`validation-${criterion.check.status}`}>{i + 1}. {criterion.check.status === "pass" ? "Kontroll läbitud" : criterion.check.status === "warning" ? "Hoiatus" : "Vigane"}</p>{criterion.check.messages.map(message => <p className="validation-note" key={message.code}>{message.message}</p>)}<CriterionForm storyId={story.id} criterion={criterion} mutate={mutate} busy={busy} /></div>)}<CriterionForm storyId={story.id} mutate={mutate} busy={busy} /></section>
-   <section id="story-mockup"><h3>Mockup</h3><p className="muted">{story.mockupVersions.length ? `${story.mockupVersions.length} versiooni salvestatud.` : "Mockup puudub. Loomine ja vaade lisanduvad järgmises ehitusetapis."}</p></section>
+   <section id="story-mockup"><h3>Mockup</h3><p className="muted">Praeguse mockupi elementide ID-d: {mockupElementIds(story.mockupVersions[0]?.structureJson).join(", ") || "puuduvad"}. Kasuta neid kriteeriumide viidetes.</p><MockupEditor storyId={story.id} versions={story.mockupVersions} busy={busy} mutate={mutate} /></section>
    <section id="story-questions"><h3>Avatud küsimused</h3>{story.openQuestions.map(question => <div className="child-card" key={question.id}><p>{question.resolvedAt ? "Lahendatud" : "Lahendamata"}</p><QuestionForm storyId={story.id} question={question} mutate={mutate} busy={busy} /></div>)}<QuestionForm storyId={story.id} mutate={mutate} busy={busy} /></section>
    <button className="archive-button" disabled={busy} onClick={() => mutate({ type: "archive_story", storyId: story.id })}>Arhiveeri lugu</button>
   </section>}
