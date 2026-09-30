@@ -2,7 +2,7 @@
 
 ## completed work package
 
-WP-08 — manual and AI grooming. WP-00 through WP-07 remain passing.
+WP-09 — recovery, continuity and product hardening. WP-00 through WP-08 remain passing.
 
 ## implementation convention for every agent
 
@@ -14,70 +14,64 @@ WP-08 — manual and AI grooming. WP-00 through WP-07 remain passing.
 
 ## implemented
 
-- Manual split starts from the selected active story; manual merge accepts two to eight active stories. Both show editable result wording and exact criterion assignment before confirmation.
-- Split requires every source criterion exactly once across result stories. Merge requires every source criterion, deduplicates normalized identical text, unions its valid mockup references and archives every source.
-- Replacement stories are inserted contiguously at the earliest source position. Unrelated stories keep their relative order. Selection moves to the first result when needed. An MVP boundary anchored to a replaced source clears; other boundaries stay attached to their story.
-- Source stories and their children remain archived for audit. Current mockups are copied on split. Merge combines current safe mockup trees, namespaces element IDs and rewrites criterion mappings. Open questions are retained on results.
-- Split, merge and repair run in one project-scoped transaction, create one complete backlog ChangeEvent and increment/archive the sources. One undo restores all source stories, criteria, questions, mockups, ordering, selection and MVP boundary while archiving generated results.
-- AI `review_backlog` uses a strict task schema and the existing validate/repair boundary. Fixture review deterministically finds oversized, exact duplicate, invalid-criterion, missing-mockup and malformed-Connextra cases from current database state.
-- Each AI finding is its own pending Proposal with a frozen source snapshot. Apply, edit and ignore operate independently. Editable fields cannot change source IDs, versions or operation type. Stale, cross-project, duplicate-source, lost-criterion, repeated-criterion, invalid-reference and mockup-removal attempts fail atomically.
-- Review generation and previews do not mutate backlog data. Applying one finding does not apply or reject siblings. Repeated confirmation is idempotent. Overlapping sibling findings remain pending and will report stale state if their sources changed.
-- The review UI shows before/after wording, criteria, mockups, archive/order/MVP behavior and controls per finding. Repair findings expose validated structured editing; split/merge expose result wording and split criterion reassignment.
-- The conversation has an explicit `Vaata backlog üle` action. The backlog panel has manual split and merge controls. Both flows work without changing the existing story editor or refinement flows.
-- README usage now documents grooming behavior and stale/undo rules.
+- The recommended next stage is derived from persisted roles, active stories, selected story, criteria, mockups and still-effective applied proposals. Opening a project reconciles the stored recommendation instead of trusting stale mutation-specific values.
+- Reopened projects show a context-aware `Jätka siit` card. It links to the recommended stage while preserving free non-linear stage navigation.
+- Backlog mutations and proposal confirmations accept project-scoped idempotency keys. The key is claimed and completed in the same transaction as the domain mutation, so a repeated request does not duplicate stories, criteria, mockups or proposal effects.
+- Browser mutation paths generate idempotency keys and use synchronous ref guards in addition to disabled/loading states. Concurrent key collisions return a safe conflict.
+- AI submissions persist request execution state and their user-message link before provider work. Completed requests deduplicate; failed or lease-expired requests reuse the saved message on retry.
+- Conversation reads recover both keyed and legacy orphaned `processing` messages after a 60-second lease. Recovery exposes the existing retry control rather than leaving a permanent spinner.
+- Provider calls have a bounded timeout in addition to the live adapter's abort timeout. Malformed structured output is still repaired once and then fails safely.
+- Workspace tabs support left/right keyboard movement, correct tab focus state, associated tab panels and responsive single-panel behavior. Backlog, project creation and conversation expose busy/status states; route loading and error boundaries now explain recovery clearly.
+- The full fixture-AI browser suite covers restart persistence, mobile layouts, manual flows, proposal flows, prototype/refinement, grooming, unavailable AI, repeated mutation keys and a correct grooming resume recommendation.
+- README includes a live-provider smoke-test procedure. The deterministic suite remains fixture-based.
 
 ## important files
 
-- `src/domain/grooming/contracts.ts` — strict operations, findings and response limits.
-- `src/domain/grooming/review.ts` — deterministic fixture findings based on current backlog state.
-- `src/services/grooming/service.ts` — validation, criterion/mockup transformation, archive/order/MVP behavior and atomic application.
-- `src/components/backlog/grooming.tsx` — manual split and merge selection, editing and confirmation.
-- `src/components/proposals/grooming.tsx` — per-finding preview and apply/edit/ignore controls.
-- `src/services/ai-orchestration/service.ts` — review context and independent proposal persistence.
-- `src/services/proposals/workflow.ts` — scoped finding claims and application.
-- `tests/grooming.test.ts`, `tests/e2e/projects.spec.ts` — service invariants and browser vertical slice.
+- `src/domain/stages/recommendation.ts` — deterministic recommendation rules.
+- `src/services/projects/recommendation.ts` — persisted-state query and recommendation reconciliation.
+- `src/services/requests/idempotency.ts` — request-key validation and transactional claim/completion.
+- `src/services/ai-orchestration/service.ts` — external-request lifecycle, lease recovery and retry continuity.
+- `src/services/stories/service.ts`, `src/services/proposals/workflow.ts` — idempotency inside existing project-scoped transactions.
+- `src/components/layout/workspace.tsx` — resume card and accessible responsive tabs.
+- `tests/stages.test.ts`, `tests/backlog.test.ts`, `tests/ai.test.ts`, `tests/e2e/projects.spec.ts` — recommendation, deduplication, recovery and acceptance coverage.
 
 ## database changes
 
-- None. Existing Story, AcceptanceCriterion, OpenQuestion, MockupVersion, Proposal and ChangeEvent models support this package.
-- `type: "grooming"` stores one validated finding per Proposal. `beforeSnapshotJson` freezes the active-story review input; `afterSnapshotJson` stores the finding and operation.
-- Replaced source stories use `archivedAt`; generated results are new records. Undo archives generated records and restores source records from the complete backlog snapshot.
+- Migration `20260930180500_request_idempotency` adds `RequestExecution`.
+- A request execution stores a project-scoped unique key, scope, lifecycle status, optional linked resource, timestamps and completion time.
+- Deleting a project cascades its request-execution records. The index on project/status/update time supports interrupted-request recovery.
 
 ## commands run
 
-- Baseline from WP-07: lint, typecheck, 40 service tests and build passed; 9 browser scenarios passed.
+- Baseline `npm run lint`, `npm run typecheck`, `npm test` and `npm run build` passed with the WP-08 state: 46 tests across 5 files.
 - Final `npm run lint` — passed with no errors or warnings.
 - Final `npm run typecheck` — passed.
-- Final `npm test` — passed: 46 tests across 5 files.
+- Final `npm test` — passed: 55 tests across 6 files.
 - Final `npm run build` — passed.
-- Approved `npm run test:e2e` — passed all 10 Chromium scenarios.
-- Inspected the generated grooming mobile screenshot; previews and controls fit the viewport, and the automated overflow assertion passes.
-- `git diff --check` — passed.
-- Live-provider smoke test not run: no live model/credentials configured. Fixture review runs through the same schema, semantic validation, proposal and confirmation boundaries.
+- Final approved `npm run test:e2e` — passed all 10 Chromium scenarios.
+- The first sandboxed e2e attempt could not bind port 3100 (`EPERM`); the required approved rerun passed.
+- Final `git diff --check` — passed.
+- Live-provider smoke test not run: no live model or credentials were configured. README now contains the exact optional procedure.
 
 ## known issues
 
-- Fixture review detects exact normalized duplicate wording; it does not attempt semantic similarity.
-- Fixture missing-mockup repair uses the existing booking fixture as an editable example, so a user should tailor it to the story before applying.
-- Applying a finding can make another finding over the same source stale. The stale finding stays pending so the user can see why it no longer applies and regenerate the review.
-- Repair editing currently uses validated structured JSON because it can contain full story, criterion and mockup changes. Split and merge have field controls.
-- Merged mockups are combined into one safe document rather than selecting one source screen.
-- A server process terminated while a request is marked processing can leave that turn without retry. WP-09 should add interrupted-request recovery/lease expiry and generalized request idempotency.
-- Large conversation histories render in full; provider context remains bounded to 12 recent relevant turns.
+- Large conversation histories still render in full; provider context remains bounded to 12 recent relevant turns.
+- Idempotency receipts are retained for the life of the project. This is intentionally simple for the local MVP; a long-running production service would add retention cleanup.
+- The 60-second interrupted-request lease assumes provider work completes within its 30-second orchestration timeout. The OpenAI adapter aborts its HTTP request after 25 seconds.
+- Fixture review detects exact normalized duplicate wording rather than semantic similarity.
+- Repair editing uses validated structured JSON for full story/criterion/mockup changes; split and merge have dedicated field controls.
 - Existing npm audit findings remain: four high-severity development-only Prisma CLI entries. No dependencies changed.
 
 ## decisions or spec deviations
 
 - No contract-level deviations.
-- The MVP boundary clears if any replaced source is its anchor, matching the existing archive rule and specification. The UI explains this before confirmation.
-- Split copies the current source mockup to each result, preserving criterion mappings. Merge namespaces colliding element IDs and rewrites mappings.
-- Open questions are copied to each split/merge result so unresolved product decisions are not silently lost.
-- AI findings are capped at 12 per review to keep strict structured responses and stored snapshots bounded.
+- Recommendation is based on durable artifacts, not conversation replay. An applied refinement counts only while the selected story version remains newer than the proposal base version, so undo removes its effect from the recommendation.
+- Requests without an idempotency header remain supported for compatibility and direct service tests; all first-party browser mutation paths send a key.
+- A duplicate request that already completed returns current persisted state. A same-key request still processing or reused for another scope returns a safe conflict.
 
 ## next package starting point
 
-- Agent 9 starts WP-09: recovery, continuity and product hardening.
-- Add recommended-next-step calculation from actual persisted state, reopen/resume UI, interrupted-request recovery and generalized double-submit protection.
-- Review responsive workspace and accessibility states with the now complete manual, proposal, prototype, refinement and grooming flows.
-- Preserve the existing project-scoped transactions, immutable proposal sources, complete ChangeEvent snapshots and append-only mockup restoration.
-- Keep isolated test databases, build before browser tests, lowercase intermediate commits and honest validation records.
+- Agent 10 starts WP-10: documentation and demonstration package.
+- Complete evaluator setup/troubleshooting, one-page usage scenario, development backlog with MVP line, feature-status matrix, known AI limitations, demo script, security review and final acceptance matrix.
+- Preserve state-derived recommendations, request idempotency, lease recovery, project-scoped transactions, immutable proposal sources and append-only mockup restoration.
+- Run the full clean-checkout validation suite, including migration deployment and all Chromium scenarios.

@@ -90,6 +90,11 @@ test("API validation returns useful errors without mutating state", async ({ req
   expect((await request.get("/api/projects/missing")).status()).toBe(404);
   expect((await request.patch("/api/projects/missing", { data: { currentStage: "roles" } })).status()).toBe(404);
   expect(await (await request.get("/api/projects")).json()).toEqual(before);
+  const mutation = { type: "create_story", role: "Liige", action: "vältida duplikaati", benefit: "backlog jääb korrektseks", status: "idea", size: null, requiresMockup: false };
+  const headers = { "Idempotency-Key": "e2e-same-request-01" };
+  expect((await request.post(`/api/projects/${project.id}/backlog`, { data: mutation, headers })).ok()).toBe(true);
+  expect((await request.post(`/api/projects/${project.id}/backlog`, { data: mutation, headers })).ok()).toBe(true);
+  expect((await (await request.get(`/api/projects/${project.id}/backlog`)).json()).stories).toHaveLength(1);
 });
 
 test("manual backlog, readiness, ordering, MVP and one-level undo work without AI", async ({ page, request }, testInfo) => {
@@ -327,6 +332,7 @@ test("confirm roles, select happy-path stories and explicitly choose priority", 
   expect(refined.stories[1]).toEqual(siblingBefore);
   await page.reload();
   await expect(page.locator("#story-mockup")).toContainText("Hind sisaldab käibemaksu 24%.");
+  await expect(page.locator(".resume-card").getByRole("heading", { name: "Groomimine", exact: true })).toBeVisible();
   await page.locator("#panel-backlog").getByRole("button", { name: "Võta tagasi", exact: true }).click();
   await expect(page.locator("#story-criteria").getByLabel("Kriteeriumi tekst")).toHaveCount(3);
   const undone = await (await request.get(`/api/projects/${project.id}/backlog`)).json();
