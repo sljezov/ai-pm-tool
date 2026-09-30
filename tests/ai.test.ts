@@ -7,7 +7,8 @@ import { createDatabaseClient } from "@/lib/db/client";
 import { projectService } from "@/services/projects/service";
 import { storyService } from "@/services/stories/service";
 import { conversationService } from "@/services/ai-orchestration/service";
-import { clarificationSchema, roleProposalSchema } from "@/domain/ai/contracts";
+import { proposalWorkflowService } from "@/services/proposals/workflow";
+import { clarificationSchema, priorityRecommendationSchema, roleProposalSchema, storyProposalSchema } from "@/domain/ai/contracts";
 import { AiInvalidOutputError, AiUnavailableError, FixtureAiProvider, OpenAiProvider, generateValidated, type AiProvider, type AiRequest } from "@/lib/ai/provider";
 
 const fixture = new FixtureAiProvider();
@@ -155,5 +156,73 @@ describe("persistent guided conversation", () => {
     expect(result.messages.at(-1)).toMatchObject({ messageType: "ai_error" });
     expect(JSON.stringify(result)).not.toMatch(/key-secret|internal stack|full prompt/);
     expect(JSON.stringify(await client.conversationMessage.findMany({ where: { projectId: p.id } }))).not.toMatch(/key-secret|internal stack|full prompt/);
+  });
+});
+
+describe("role, story and priority proposal workflow", () => {
+  let directory: string;
+  let client: ReturnType<typeof createDatabaseClient>;
+  beforeAll(async () => {
+    directory = await mkdtemp(join(tmpdir(), "ai-pm-story-proposals-"));
+    const databasePath = join(directory, "test.db"); await writeFile(databasePath, "");
+    execFileSync(process.execPath, [resolve("node_modules/prisma/build/index.js"), "migrate", "deploy"], { env: { ...process.env, DATABASE_URL: `file:${databasePath}` }, stdio: "pipe" });
+    client = createDatabaseClient(`file:${databasePath}`);
+  }, 30_000);
+  afterAll(async () => { await client?.$disconnect(); if (directory) await rm(directory, { recursive: true, force: true }); });
+
+  it("validates bounded happy-path and scoped priority response contracts", async () => {
+    const stories = await fixture.generateStructured<unknown>({ task: "propose_stories", systemInstructions: "", context: { roles: [{ name: "Liige", isPrimary: true }] }, outputSchema: {} });
+    expect(storyProposalSchema.safeParse(stories).success).toBe(true);
+    expect(storyProposalSchema.safeParse({ ...(stories as object), payload: { primaryRole: "Liige", stories: [] } }).success).toBe(false);
+    const priority = { message: "Valik", payload: { storyId: "known", rationale: "Annab põhiväärtuse." }, nextActions: [{ id: "again", label: "Uuesti", action: "recommend_priority" }] };
+    expect(priorityRecommendationSchema.safeParse(priority).success).toBe(true);
+    expect(priorityRecommendationSchema.safeParse({ ...priority, payload: { storyId: "", rationale: "x" } }).success).toBe(false);
+  });
+
+  it("applies edited roles and only selected stories once, then reorders only on confirmed priority", async () => {
+    const project = await projectService(client).create({ name: "Spordiklubi", description: "Treeningute leidmine ja broneerimine" });
+    const conversation = conversationService(client, fixture); const workflow = proposalWorkflowService(client);
+    let data = await conversation.submit(project.id, { kind: "text", task: "propose_roles", text: "Paku rollid" });
+    const roleMessage = data.messages.find(message => message.task === "propose_roles" && message.response)!;
+    expect(await client.projectRole.count({ where: { projectId: project.id } })).toBe(0);
+    expect(await client.changeEvent.count({ where: { projectId: project.id } })).toBe(0);
+    const offeredRoles = roleMessage.response && "roles" in roleMessage.response.payload ? roleMessage.response.payload.roles : [];
+    await workflow.confirm(project.id, { kind: "confirm_roles", proposalId: roleMessage.proposalId, roles: offeredRoles.slice(0, 2).map((role, index) => ({ temporaryId: role.temporaryId, name: index ? role.name : "Klubi liige" })), primaryTemporaryId: offeredRoles[0].temporaryId });
+    expect(await client.projectRole.findMany({ where: { projectId: project.id }, orderBy: { position: "asc" } })).toMatchObject([{ name: "Klubi liige", isPrimary: true, origin: "ai" }, { isPrimary: false }]);
+    expect(await client.project.findUniqueOrThrow({ where: { id: project.id } })).toMatchObject({ currentStage: "stories", recommendedNextStage: "stories" });
+
+    data = await conversation.submit(project.id, { kind: "text", task: "propose_stories", text: "Koosta happy path" });
+    const storyMessage = data.messages.find(message => message.task === "propose_stories" && message.response)!;
+    const offeredStories = storyMessage.response && "stories" in storyMessage.response.payload ? storyMessage.response.payload.stories : [];
+    expect(offeredStories.length).toBeGreaterThanOrEqual(5);
+    expect(await client.story.count({ where: { projectId: project.id } })).toBe(0);
+    const selected = offeredStories.slice(0, -1).map(story => story.temporaryId);
+    await workflow.confirm(project.id, { kind: "confirm_stories", proposalId: storyMessage.proposalId, selectedTemporaryIds: selected });
+    await workflow.confirm(project.id, { kind: "confirm_stories", proposalId: storyMessage.proposalId, selectedTemporaryIds: selected });
+    const saved = await client.story.findMany({ where: { projectId: project.id }, orderBy: { position: "asc" } });
+    expect(saved).toHaveLength(offeredStories.length - 1);
+    expect(saved.map(story => story.position)).toEqual(saved.map((_, index) => index));
+    expect(saved.map(story => story.action)).not.toContain(offeredStories.at(-1)?.action);
+    expect(await client.project.findUniqueOrThrow({ where: { id: project.id } })).toMatchObject({ currentStage: "priorities", recommendedNextStage: "priorities" });
+
+    const orderBefore = saved.map(story => story.id);
+    data = await conversation.submit(project.id, { kind: "text", task: "recommend_priority", text: "Soovita prioriteet" });
+    const priorityMessage = data.messages.find(message => message.task === "recommend_priority" && message.response)!;
+    expect((await client.story.findMany({ where: { projectId: project.id }, orderBy: { position: "asc" } })).map(story => story.id)).toEqual(orderBefore);
+    const chosen = saved.at(-1)!;
+    await workflow.confirm(project.id, { kind: "confirm_priority", proposalId: priorityMessage.proposalId, storyId: chosen.id });
+    expect((await client.story.findMany({ where: { projectId: project.id }, orderBy: { position: "asc" } }))[0].id).toBe(chosen.id);
+    expect(await client.project.findUniqueOrThrow({ where: { id: project.id } })).toMatchObject({ selectedStoryId: chosen.id, currentStage: "prototype", recommendedNextStage: "prototype" });
+  });
+
+  it("rejects cross-project and superseded confirmations", async () => {
+    const first = await projectService(client).create({ name: "Esimene" }); const second = await projectService(client).create({ name: "Teine" });
+    const conversation = conversationService(client, fixture); const workflow = proposalWorkflowService(client);
+    const initial = await conversation.submit(first.id, { kind: "text", task: "propose_roles", text: "Rollid" });
+    const message = initial.messages.find(item => item.task === "propose_roles" && item.response)!;
+    const roles = message.response && "roles" in message.response.payload ? message.response.payload.roles : [];
+    await expect(workflow.confirm(second.id, { kind: "confirm_roles", proposalId: message.proposalId, roles: roles.map(role => ({ temporaryId: role.temporaryId, name: role.name })), primaryTemporaryId: roles[0].temporaryId })).rejects.toMatchObject({ status: 404 });
+    await conversation.submit(first.id, { kind: "text", task: "propose_roles", text: "Uued rollid" });
+    await expect(workflow.confirm(first.id, { kind: "confirm_roles", proposalId: message.proposalId, roles: roles.map(role => ({ temporaryId: role.temporaryId, name: role.name })), primaryTemporaryId: roles[0].temporaryId })).rejects.toMatchObject({ status: 409 });
   });
 });

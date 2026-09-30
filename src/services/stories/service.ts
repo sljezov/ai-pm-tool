@@ -25,7 +25,7 @@ export function storyService(client: PrismaClient) {
   async function get(projectId: string) {
     projectIdSchema.parse(projectId);
     const snapshot = await backlogSnapshot(client, projectId);
-    const latest = await client.changeEvent.findFirst({ where: { projectId }, orderBy: { createdAt: "desc" } });
+    const latest = await client.changeEvent.findFirst({ where: { projectId, entityType: "backlog" }, orderBy: { createdAt: "desc" } });
     return { ...snapshot, stories: snapshot.stories.filter(story => !story.archivedAt).map(story => {
       const ids = mockupElementIds(story.mockupVersions[0]?.structureJson);
       return { ...story, criteria: story.criteria.map(criterion => {
@@ -43,7 +43,7 @@ export function storyService(client: PrismaClient) {
       const story = "storyId" in command && command.storyId ? active.find(item => item.id === command.storyId) : undefined;
       if ("storyId" in command && command.storyId && !story) throw new BacklogError("Selle projekti kasutajalugu ei leitud.", 404);
       if (command.type === "undo") {
-        const latest = await tx.changeEvent.findFirst({ where: { projectId }, orderBy: { createdAt: "desc" } });
+        const latest = await tx.changeEvent.findFirst({ where: { projectId, entityType: "backlog" }, orderBy: { createdAt: "desc" } });
         if (!latest || latest.undoneAt) throw new BacklogError("Viimast muudatust ei saa tagasi võtta.", 409);
         await restoreBacklogSnapshot(tx, projectId, JSON.parse(latest.beforeSnapshotJson));
         await tx.changeEvent.update({ where: { id: latest.id }, data: { undoneAt: new Date() } });
