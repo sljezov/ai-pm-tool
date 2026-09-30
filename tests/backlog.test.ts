@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -11,7 +11,7 @@ import { mockupFixtures } from "@/domain/mockup/document";
 const input = { role: "Liige", action: "broneerida treeningu", benefit: "koht oleks tagatud", status: "idea", size: null, requiresMockup: false };
 describe("manual backlog invariants", () => {
  let directory: string; let client: ReturnType<typeof createDatabaseClient>;
- beforeAll(async () => { directory = await mkdtemp(join(tmpdir(), "ai-pm-backlog-")); const url = `file:${join(directory, "test.db")}`;
+ beforeAll(async () => { directory = await mkdtemp(join(tmpdir(), "ai-pm-backlog-")); const databasePath = join(directory, "test.db"); await writeFile(databasePath, ""); const url = `file:${databasePath}`;
   execFileSync(process.execPath, [resolve("node_modules/prisma/build/index.js"), "migrate", "deploy"], { env: { ...process.env, DATABASE_URL: url }, stdio: "pipe" }); client = createDatabaseClient(url);
  }, 30_000);
  afterAll(async () => { await client?.$disconnect(); if (directory) await rm(directory, { recursive: true, force: true }); });

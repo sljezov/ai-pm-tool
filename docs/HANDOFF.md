@@ -49,6 +49,7 @@ WP-04 — AI infrastructure and guided clarification. WP-00 through WP-03 remain
 - `npm test` — passed: 28 tests across 4 files.
 - `npm run build` — passed before browser validation.
 - `npm run test:e2e` — passed: 6 Chromium scenarios against isolated temporary databases. New coverage includes choices, Other, Skip, multiple selection, literal script-like answer text, roles without backlog mutation, reload, mobile overflow, unavailable AI, retry without duplicated user message, manual backlog, and provider-mode recovery after server restart.
+- The first full service-test rerun exposed a local Prisma schema-engine limitation: it could migrate an existing SQLite file but could not create the temporary file itself. Test setup now creates each empty isolated database before migrations; the full 28-test suite then passed.
 - Desktop and 390px mobile conversation screenshots visually reviewed; controls wrap and automated overflow checks pass.
 - New service test initially used the wrong existing mutation method and omitted required status/size; corrected the test to use the existing manual service contract. No product defect was hidden.
 - Review added explicit malformed-successful-HTTP-envelope repair coverage; final tests include this correction.

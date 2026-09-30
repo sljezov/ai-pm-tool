@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -12,7 +12,9 @@ describe("persistent project service", () => {
   let databaseUrl: string;
   beforeAll(async () => {
     directory = await mkdtemp(join(tmpdir(), "ai-pm-projects-"));
-    databaseUrl = `file:${join(directory, "test.db")}`;
+    const databasePath = join(directory, "test.db");
+    await writeFile(databasePath, "");
+    databaseUrl = `file:${databasePath}`;
     execFileSync(process.execPath, [resolve("node_modules/prisma/build/index.js"), "migrate", "deploy"], { env: { ...process.env, DATABASE_URL: databaseUrl }, stdio: "pipe" });
     client = createDatabaseClient(databaseUrl);
   }, 30_000);
