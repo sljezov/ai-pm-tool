@@ -229,7 +229,7 @@ test("guided fixture conversation choices, Other, Skip, multi-selection and role
   await expect(page.getByRole("button", { name: "Jäta vahele" })).toBeVisible();
   const goalGroup = page.getByRole("group", { name: "Millist põhiprobleemi soovid kõigepealt lahendada?" });
   await goalGroup.getByRole("button", { name: "Treeningute broneerimine" }).click();
-  await goalGroup.getByRole("button", { name: "Saada vastus" }).click();
+  await page.getByRole("button", { name: "Saada vastus" }).click();
   await expect(page.getByRole("heading", { name: "Rollide ettepanek", exact: true })).toBeVisible();
   await expect(page.getByText("Treener", { exact: true })).toBeVisible();
   let backlog = await (await request.get(`/api/projects/${project.id}/backlog`)).json();
@@ -239,7 +239,7 @@ test("guided fixture conversation choices, Other, Skip, multi-selection and role
   await group.getByRole("button", { name: "Liikmed või kliendid" }).click();
   await group.getByRole("button", { name: "Töötajad", exact: true }).click();
   await expect(group.getByRole("button", { name: "Töötajad", exact: true })).toHaveAttribute("aria-pressed", "true");
-  await group.getByRole("button", { name: "Saada vastus" }).click();
+  await page.getByRole("button", { name: "Saada vastus" }).click();
   await expect(page.getByText(/Liikmed või kliendid, Töötajad/, { exact: false })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Rollide ettepanek", exact: true })).toHaveCount(2);
   await page.screenshot({ path: testInfo.outputPath("conversation-desktop.png"), fullPage: true });
@@ -258,7 +258,8 @@ test("guided fixture conversation choices, Other, Skip, multi-selection and role
     const p = await response.json(); await page.goto(`/projects/${p.id}`);
     await page.getByLabel("Sinu idee või täpsustus").fill("Uus idee"); await page.getByRole("button", { name: "Saada sõnum" }).click();
     if (skip) await page.getByRole("button", { name: "Jäta vahele" }).click();
-    else { await page.getByRole("button", { name: "Muu (kirjutan ise)" }).click(); await page.getByLabel("Muu vastus", { exact: true }).fill("<script>literal answer</script>"); await page.getByRole("button", { name: "Saada vastus" }).click(); }
+    else { await page.getByRole("button", { name: "Muu (kirjutan ise)" }).click(); await page.getByLabel("Muu vastus", { exact: true }).fill("<script>literal answer</script>"); }
+    await page.getByRole("button", { name: "Saada vastus" }).click();
     await expect(page.getByRole("heading", { name: "Rollide ettepanek", exact: true })).toBeVisible();
     const history = await (await request.get(`/api/projects/${p.id}/conversation`)).json();
     expect(history.messages[2].content).toContain(skip ? "Jäta vahele" : "Muu: <script>literal answer</script>");
