@@ -1,0 +1,63 @@
+# dependencies
+node_modules/
+
+# next.js build output
+.next/
+out/
+
+# production builds
+build/
+dist/
+
+# test output
+coverage/
+playwright-report/
+test-results/
+blob-report/
+
+# local environment files
+.env
+.env.*
+!.env.example
+
+# local databases and journals
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite-journal
+*.sqlite-shm
+*.sqlite-wal
+prisma/dev.db*
+
+# logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# cache and tooling
+.turbo/
+.cache/
+.eslintcache
+*.tsbuildinfo
+src/generated/
+
+# editor files
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+*.swp
+*.swo
+
+# operating system files
+.DS_Store
+Thumbs.db
+
+# local AI and agent scratch files
+.codex/
+.agents/
+.local/
