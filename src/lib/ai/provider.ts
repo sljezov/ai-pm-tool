@@ -18,7 +18,7 @@ export class OpenAiProvider implements AiProvider {
       const response = await fetch("https://api.openai.com/v1/responses", {
         method: "POST", signal: AbortSignal.timeout(25_000),
         headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ model: process.env.OPENAI_MODEL, store: false, instructions: request.systemInstructions, input: JSON.stringify(request.context), max_output_tokens: 3000, text: { format: { type: "json_schema", name: request.task, strict: true, schema: request.outputSchema } } }),
+        body: JSON.stringify({ model: process.env.OPENAI_MODEL, store: false, instructions: request.systemInstructions, input: JSON.stringify(request.context), max_output_tokens: request.task === "propose_refinement" ? 6000 : 3000, text: { format: { type: "json_schema", name: request.task, strict: true, schema: request.outputSchema } } }),
       });
       if (!response.ok) throw new AiUnavailableError();
       const body = await response.text();

@@ -70,7 +70,7 @@ export function conversationService(client: PrismaClient, provider?: AiProvider)
         task = source.response.payload.questions.every(item => item.id === question.id || previous.includes(item.id)) ? "propose_roles" : "clarify_idea";
       } else {
         text = input.text;
-        task = input.task ?? (current.currentStage === "refinements" || current.recommendedNextStage === "refinements" ? "propose_refinement" : latestResponse?.task ?? "clarify_idea");
+        task = input.task ?? (current.currentStage === "refinements" || current.currentStage === "prototype" && current.recommendedNextStage === "refinements" ? "propose_refinement" : latestResponse?.task ?? "clarify_idea");
       }
       const message = await client.conversationMessage.create({ data: { projectId: id, role: "user", messageType: input.kind, content: text, structuredPayloadJson: JSON.stringify({ task, status: "processing", answeredQuestionIds }) } });
       userMessageId = message.id;
@@ -85,7 +85,7 @@ export function conversationService(client: PrismaClient, provider?: AiProvider)
     }
     if ((task === "propose_prototype" || task === "propose_refinement") && !current.stories.some(story => story.id === current.selectedStoryId)) {
       await client.conversationMessage.update({ where: { id: userMessageId }, data: { structuredPayloadJson: JSON.stringify({ task, status: "failed", answeredQuestionIds }) } });
-      throw new BacklogError("Vali backlogist lugu, millele kriteeriumid ja mockup koostada.", 409);
+      throw new BacklogError(task === "propose_refinement" ? "Vali backlogist lugu, mida kliendi täpsustusega muuta." : "Vali backlogist lugu, millele kriteeriumid ja mockup koostada.", 409);
     }
     const requestState = { task, answeredQuestionIds };
     try {

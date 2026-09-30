@@ -335,6 +335,19 @@ describe("role, story and priority proposal workflow", () => {
     expect(await stories.get(project.id)).toEqual(stale);
   });
 
+  it("applies only changed areas and refuses edits to omitted areas", async () => {
+    const { project, stories, before, payload } = await refinementSetup();
+    const provider: AiProvider = { async generateStructured<T>() { return { message: "Muudan ainult sõnastust.", payload: { targetStoryId: payload.targetStoryId, baseStoryVersion: payload.baseStoryVersion, story: payload.story, crossStorySuggestions: [] }, nextActions: [{ id: "again", label: "Uuesti", action: "propose_refinement" }] } as T; } };
+    const data = await conversationService(client, provider).submit(project.id, { kind: "text", task: "propose_refinement", text: "Ainult sõnastus" });
+    const message = data.messages.filter(item => item.task === "propose_refinement" && item.response).at(-1)!;
+    await expect(proposalWorkflowService(client).confirm(project.id, { kind: "confirm_refinement", proposalId: message.proposalId, edits: { mockup: payload.mockup!.after } })).rejects.toMatchObject({ status: 400 });
+    await proposalWorkflowService(client).confirm(project.id, { kind: "confirm_refinement", proposalId: message.proposalId, edits: {} });
+    const changed = await stories.get(project.id);
+    expect(changed.stories[0].criteria).toEqual(before.stories[0].criteria);
+    expect(changed.stories[0].mockupVersions).toEqual(before.stories[0].mockupVersions);
+    expect(changed.stories[1]).toEqual(before.stories[1]);
+  });
+
   it("invalid AI refinement before-values, scope and executable trees are repaired once, never displayed", async () => {
     const { project, before, requests, payload } = await refinementSetup();
     for (const changed of [
