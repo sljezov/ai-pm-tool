@@ -245,6 +245,33 @@ describe("role, story and priority proposal workflow", () => {
     await expect(proposalWorkflowService(client).confirm(project.id, { kind: "confirm_prototype", proposalId: message.proposalId, acceptProposedStory: false, criteria: payload.criteria.slice(0, 3) })).rejects.toMatchObject({ status: 409 });
   });
 
+  it("regenerates from current criteria/mockup and preserves history while recalculating readiness", async () => {
+    const { project, stories, target, message, payload } = await prototypeSetup();
+    const workflow = proposalWorkflowService(client);
+    await workflow.confirm(project.id, { kind: "confirm_prototype", proposalId: message.proposalId, acceptProposedStory: false, criteria: payload.criteria.slice(0, 3) });
+    const readyStory = (await stories.get(project.id)).stories[0];
+    await stories.mutate(project.id, { type: "update_story", storyId: target.id, role: readyStory.role, action: readyStory.action, benefit: readyStory.benefit, status: "ready_for_development", size: null, requiresMockup: true });
+    const requests: AiRequest[] = [];
+    const provider: AiProvider = { async generateStructured<T>(request: AiRequest) {
+      requests.push(request);
+      const response = await fixture.generateStructured<{ payload: PrototypePayload }>(request);
+      response.payload.proposedStory = { role: "Klubi liige", action: "kinnitada treeningu broneeringu", benefit: "koht säilib" };
+      return response as T;
+    } };
+    const data = await conversationService(client, provider).submit(project.id, { kind: "text", task: "propose_prototype", text: "Täpsusta prototüüpi" });
+    const next = data.messages.filter(item => item.task === "propose_prototype" && item.response).at(-1)!;
+    const proposal = next.response && "targetStoryId" in next.response.payload ? next.response.payload : payload;
+    expect(requests[0]).toMatchObject({ context: { selectedStory: { criteria: expect.arrayContaining([{ text: payload.criteria[0].text, mockupElementIds: payload.criteria[0].mockupElementIds }]), mockup: payload.mockup } } });
+    const before = await stories.get(project.id);
+    const oldMockup = before.stories[0].mockupVersions[0];
+    await workflow.confirm(project.id, { kind: "confirm_prototype", proposalId: next.proposalId, acceptProposedStory: true, criteria: [proposal.criteria[3]] });
+    const changed = (await stories.get(project.id)).stories[0];
+    expect(changed).toMatchObject({ role: "Klubi liige", action: "kinnitada treeningu broneeringu", benefit: "koht säilib", status: "needs_clarification", version: before.stories[0].version + 1 });
+    expect(changed.readiness.ready).toBe(false);
+    expect(changed.mockupVersions[1]).toEqual(oldMockup);
+    expect(changed.mockupVersions[0]).toMatchObject({ version: 2, source: "ai" });
+  });
+
   it("validates bounded happy-path and scoped priority response contracts", async () => {
     const stories = await fixture.generateStructured<unknown>({ task: "propose_stories", systemInstructions: "", context: { roles: [{ name: "Liige", isPrimary: true }] }, outputSchema: {} });
     expect(storyProposalSchema.safeParse(stories).success).toBe(true);

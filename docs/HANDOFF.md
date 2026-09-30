@@ -2,7 +2,7 @@
 
 ## completed work package
 
-WP-05 — story proposals and priority. WP-00 through WP-04 remain passing.
+WP-06 — criteria and prototype proposal. WP-00 through WP-05 remain passing.
 
 ## implementation convention for every agent
 
@@ -14,71 +14,74 @@ WP-05 — story proposals and priority. WP-00 through WP-04 remain passing.
 
 ## implemented
 
-- Strict role, happy-path story and priority response schemas with bounded text, unique identifiers, contiguous happy-path order, five-to-eight story range and allowlisted next actions.
-- Live and deterministic fixture provider support for story generation and priority recommendation. Generated stories must match the current primary role; priority recommendations must reference the active database backlog.
-- Editable/selectable role proposal UI with an explicit primary role and transactional confirmation. Confirmation replaces project roles only after server validation.
-- Selectable ordered story cards with explicit `Lisa kõik`, `Lisa valitud` and regeneration controls. Only selected stories are appended, positions remain contiguous and repeat confirmation is idempotent.
-- Priority recommendation with rationale. Users may accept the suggestion or explicitly choose another current story; ordering and selection change only on confirmation.
-- Project stages advance through stories, priorities and prototype after the corresponding confirmed operations.
-- Pending proposals are project-scoped, type-checked and atomically claimed before mutation. A newer role choice supersedes stale story/priority proposals; applying stories supersedes stale priority proposals.
-- One logical backlog ChangeEvent per confirmed role, story or priority operation. One-level undo now restores roles, stages, story order and selected story as part of the complete snapshot.
-- Conversation proposal identifiers/statuses and current database roles/backlog are returned as scoped DTOs. A small client event keeps the independent backlog panel current after confirmation.
-- README usage and architecture text now describes the confirmed role/story/priority flow.
+- Prototype AI task, strict envelope/payload schemas, unique criterion identifiers and bounded safe MockupDocument validation. Unknown element references, duplicate mappings, executable tree properties and foreign target/version output are rejected through the existing one-repair pipeline.
+- Fresh selected-story context includes version, wording, criteria/mappings, unresolved questions and current mockup. Proposal rows carry targetStoryId, baseStoryVersion and a before snapshot; regeneration supersedes pending prototypes only for the same target.
+- Per-criterion accept, edit and reject controls, deterministic validation feedback and editable mockup element mappings. Optional story wording has an explicit opt-in preview. Safe application-owned renderer previews the proposed wireframe.
+- Generate from a confirmed priority recommendation or from the selected manual backlog story. Missing selection returns a direct instruction; free text after a prototype proposal regenerates that task using current database context.
+- Explicit atomic confirmation validates the stored target/version and submitted criterion identifiers, text and mappings. It replaces only target-story criteria, appends one AI mockup version, optionally updates wording and increments the story version once.
+- Idempotent repeated confirmation, project scoping and stale-version rejection. Invalid edits leave the pending proposal and all domain data unchanged. Discard marks only the proposal rejected.
+- One complete backlog ChangeEvent per applied prototype. Readiness is freshly recalculated; an invalidated ready story becomes needs_clarification. The recommended next stage advances to refinements while the current prototype stage remains available.
+- Existing one-level undo restores wording, criteria, selected story and stages together; mockup restoration appends a new version so history remains intact.
+- Service tests cover fresh context, no mutation before confirmation, selective/edit application, sibling equality, stale/scope/mapping rejection, optional wording, readiness downgrade, history, idempotency and undo.
+- Browser flow now continues through priority → prototype preview → accept/edit/reject → apply → reload. A separate browser scenario covers stale conflicts and discard; mobile prototype layout is checked and captured.
+- README usage now documents prototype review and confirmation.
 
 ## important files
 
-- `src/domain/ai/contracts.ts` — story/priority envelopes and proposal confirmation commands.
-- `src/lib/ai/provider.ts` — live instructions, fixture stories/priority and database-context domain checks.
-- `src/services/ai-orchestration/service.ts` — fresh role/backlog context and persistent story/priority proposals.
-- `src/services/proposals/workflow.ts` — transactional, scoped and idempotent proposal confirmation.
-- `src/services/stories/service.ts`, `src/services/undo/service.ts` — complete role/stage/backlog snapshots and one-level undo.
-- `src/components/conversation/conversation.tsx` — role editing, story selection and priority decision controls.
-- `src/components/backlog/backlog.tsx` — post-confirmation backlog synchronization without losing manual-operation notices.
-- `tests/ai.test.ts` — validation, no-mutation, selective apply, idempotency, scope, stale proposal, stage and undo coverage.
-- `tests/e2e/projects.spec.ts` — full fixture role → five stories → alternate priority browser flow.
+- `src/domain/ai/contracts.ts` — prototype response schema and explicit confirm/discard commands.
+- `src/lib/ai/provider.ts` — prototype fixture, live instructions and target/version checks.
+- `src/services/ai-orchestration/service.ts` — selected-story context, persisted scoped proposals and missing-selection handling.
+- `src/services/proposals/workflow.ts` — atomic target/version checks, criterion replacement, append-only mockup, readiness and ChangeEvent.
+- `src/services/mockups/service.ts` — source-aware appendMockup; existing callers default to manual.
+- `src/components/proposals/prototype.tsx` — criterion decisions, editing/mappings, warnings, optional wording and safe preview.
+- `src/components/conversation/conversation.tsx` — prototype generation and proposal rendering.
+- `tests/ai.test.ts`, `tests/e2e/projects.spec.ts` — service invariants and browser vertical slice.
 
 ## database changes
 
-- None. Existing ProjectRole, Story, Proposal and ChangeEvent models cover this package.
-- Story proposals use `type: "stories"` and persist the validated StoryProposalPayload in `afterSnapshotJson`.
-- Priority proposals use `type: "priority"` and persist `{ storyId, rationale }` in `afterSnapshotJson`.
-- New backlog snapshots include roles plus current/recommended stages. Undo remains tolerant of older snapshots that do not contain those fields.
+- None. Existing Story, AcceptanceCriterion, MockupVersion, Proposal and ChangeEvent models support this package.
+- Prototype proposals use `type: "prototype"` and persist validated PrototypeProposalPayload in afterSnapshotJson, with targetStoryId/baseStoryVersion separately persisted for the confirmation allowlist.
+- appendMockup accepts an optional source parameter; prototype confirmation uses `ai`.
+- Confirmed prototype criteria replace the target's current criterion set. Previous criteria remain in complete audit/undo snapshots.
+- Undo keeps mockup history append-only; when the previous story had no mockup, an empty document becomes the new current version.
 
 ## commands run
 
-- Baseline `npm run lint`, `npm run typecheck`, `npm test` (28 tests) and `npm run build` — passed before implementation.
-- `npm run lint` — passed after implementation.
-- `npm run typecheck` — passed after implementation.
-- `npm test` — passed: 32 tests across 4 files.
-- `npm run build` — passed with the final handoff state.
-- Initial sandbox `npm run test:e2e` could not bind `127.0.0.1:3100` (`EPERM`). The approved run then exposed two regressions: backlog remounting removed a notice, and editable role names were no longer visible as text. Both were corrected.
-- Approved `npm run test:e2e` reruns — final run passed all 7 Chromium scenarios, including the new WP-05 flow.
-- Actual live-provider smoke test was not run because no live API credentials/model are configured. Mocked provider transport coverage from WP-04 remains passing; new task validation is covered with fixture and service tests.
+- Baseline `npm run lint`, `npm run typecheck`, `npm test` (32 tests) and `npm run build` — passed before implementation.
+- Final `npm run lint` — passed.
+- Final `npm run typecheck` — passed.
+- Final `npm test` — passed: 36 tests across 4 files.
+- Final `npm run build` — passed.
+- Sandbox `npm run test:e2e` — server could not bind 127.0.0.1:3100 (EPERM); no browser assertions ran.
+- Approved `npm run test:e2e` — passed all 8 Chromium scenarios. A subsequent run including the mobile prototype assertion also passed all 8.
+- Inspected the generated prototype mobile screenshot; controls and safe preview fit the viewport.
+- Actual live-provider smoke test was not run because no live credentials/model are configured. Existing mocked transport tests pass; prototype generation, JSON schema conversion and scope validation run through the real adapter boundary with fixture/test providers.
 
 ## intermediate commits
 
-- `bfda56c` — validated story/priority generation and transactional proposal workflow.
-- Conversation UI, complete undo snapshots, browser coverage, README and this handoff are in the subsequent lowercase commit (see git history).
+- `74afe0d` — add validated prototype proposals and atomic story confirmation.
+- The subsequent lowercase commit contains prototype review controls, browser coverage, additional readiness/history coverage and documentation (see git history).
 
 ## known issues
 
-- Fixture AI is scripted demonstration content and does not semantically interpret arbitrary story/priority instructions. Live AI receives the latest text and current database context.
+- Fixture AI is scripted demonstration content. Its prototype uses a representative sports-club booking wireframe even if another story is selected; live AI receives the actual selected story and current database context.
 - Undoing a confirmed proposal restores domain state but does not reopen the already-applied Proposal row; generate a fresh proposal to apply again.
-- Prototype, refinement and grooming AI tasks remain for WP-06 through WP-08.
+- Refinement and grooming AI tasks remain for WP-07 and WP-08; WP-07 was not started.
 - A server process terminated while a request is marked processing can leave that turn without a retry action. WP-09 should add interrupted-request recovery/lease expiry and generalized request idempotency.
 - Large conversation histories still render in full; AI context remains bounded to the latest 12 relevant turns.
-- Existing npm audit findings remain: four high-severity development-only Prisma CLI entries (`prisma`, `@prisma/config`, `deepmerge-ts`, `mysql2`). No dependencies changed.
+- Existing npm audit findings remain: four high-severity development-only Prisma CLI entries (prisma, @prisma/config, deepmerge-ts, mysql2). No dependencies changed.
 
 ## decisions or spec deviations
 
-- No contract-level deviations. Priority confirmation moves the chosen story to position zero and selects it; choosing a different current story uses the same explicit confirmation path.
-- Role confirmation replaces the current role set because WP-05 presents a complete editable proposal. It also supersedes dependent pending proposals so an old primary-role story map cannot be applied.
-- Proposal confirmations share the one-level backlog undo mechanism by expanding snapshots to roles and stages, preserving the global complete-snapshot invariant.
+- No contract-level deviations.
+- Prototype confirmation replaces the reviewed criterion set rather than appending duplicates; the UI states this before confirmation and undo restores the prior set.
+- Warnings may be explicitly confirmed but fail checks block confirmation. Readiness remains authoritative and prevents warning criteria from making a story ready.
+- Prototype confirmation keeps currentStage at prototype and recommends refinements so the accepted prototype remains visible.
 
 ## next package starting point
 
-- Agent 6 starts WP-06: prototype AI schema/task, selected-story context, per-criterion accept/edit/reject state, validated wireframe preview and atomic apply.
-- Reuse the proposal identifier/status DTO and atomic claim pattern. Prototype proposals must carry targetStoryId and baseStoryVersion and reject stale versions before mutation.
-- Apply criteria plus one append-only mockup version in one transaction and one logical ChangeEvent. Re-run readiness after apply and keep another story byte-for-byte unchanged.
-- Keep the application-owned safe MockupDocument renderer; never accept HTML, scripts or executable properties.
-- Continue with isolated databases, build before browser tests, coherent lowercase commits and honest validation records.
+- Agent 7 starts WP-07: refinement AI task, explicit changed-area before/after schemas, single-story allowlist and wireframe previews.
+- Reuse prototype targetStoryId/baseStoryVersion persistence, validation/repair pipeline and atomic proposal claim.
+- Preserve one logical ChangeEvent and append-only mockup versions; apply only changed areas and keep other stories byte-for-byte unchanged.
+- Add separate pending proposals for cross-story suggestions; do not broaden the target story transaction.
+- Keep isolated test databases, build before browser tests, lowercase intermediate commits and honest validation records.

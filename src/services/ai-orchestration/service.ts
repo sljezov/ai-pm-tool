@@ -7,7 +7,7 @@ import { BacklogError } from "@/lib/validation/backlog";
 import { storyInclude } from "@/services/stories/service";
 
 function decode(raw: string | null): Record<string, unknown> { try { return raw ? JSON.parse(raw) : {}; } catch { return {}; } }
-function isTask(value: unknown): value is ConversationTask { return typeof value === "string" && value in taskSchemas; }
+function isTask(value: unknown): value is ConversationTask { return typeof value === "string" && Object.hasOwn(taskSchemas, value); }
 const proposalType: Partial<Record<ConversationTask, string>> = { propose_roles: "roles", propose_stories: "stories", recommend_priority: "priority", propose_prototype: "prototype" };
 
 export function conversationService(client: PrismaClient, provider?: AiProvider) {
