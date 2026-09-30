@@ -14,3 +14,7 @@ export async function PATCH(request: Request, context: Context) {
   try { return NextResponse.json(await projectService(db).setStage((await context.params).projectId, await request.json())); }
   catch (error) { return apiError(error); }
 }
+export async function DELETE(_request: Request, context: Context) {
+  try { await projectService(db).remove((await context.params).projectId); return new NextResponse(null, { status: 204 }); }
+  catch (error) { return apiError(error); }
+}

@@ -15,5 +15,6 @@ export function projectService(client: PrismaClient) {
     },
     create: (input: unknown) => repository.create(createProjectSchema.parse(input)),
     setStage: (id: string, input: unknown) => repository.setStage(projectIdSchema.parse(id), updateStageSchema.parse(input).currentStage),
+    remove: (id: string) => repository.remove(projectIdSchema.parse(id)),
   };
 }

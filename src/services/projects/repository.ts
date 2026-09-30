@@ -14,5 +14,6 @@ export function projectRepository(client: PrismaClient) {
     }),
     create: (data: { name: string; description: string }) => client.project.create({ data }),
     setStage: (id: string, currentStage: ProjectStage) => client.project.update({ where: { id }, data: { currentStage } }),
+    remove: (id: string) => client.project.delete({ where: { id } }),
   };
 }
