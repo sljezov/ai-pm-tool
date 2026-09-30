@@ -1,0 +1,14 @@
+# Usage scenario: from idea to a development-ready story
+
+Maria is a product manager for a sports club. The client says only: “We need an app where members can find classes and book a place.” Maria must turn that into a reviewable backlog without letting AI silently make product decisions.
+
+1. Maria creates a project named `Sports club bookings` and enters the vague client idea. With fixture AI enabled, the conversation is deterministic and visibly labelled `Näidis-AI · fixture`.
+2. The assistant asks what problem should be solved first. Maria chooses training bookings, then reviews the proposed member, trainer and club-administrator roles. She can edit the role names and chooses one primary role before confirming. Nothing enters the backlog before confirmation.
+3. The assistant proposes six ordered happy-path stories for the primary role. Maria deselects a lower-value story and adds the other five. She reviews the priority recommendation, may choose a different story, and can reorder the backlog manually. She places the MVP boundary after the smallest coherent release.
+4. For the selected booking story, Maria generates acceptance criteria and a structured wireframe. She accepts useful criteria, rejects the subjective one and edits another into a single testable outcome. The preview is rendered from application-owned components, not generated HTML. Applying the proposal stores the accepted criteria and a new mockup version in one transaction.
+5. The client later clarifies that prices must include 24% VAT. Maria enters the clarification and compares the story, criteria and wireframe before and after. She edits the proposed benefit and applies the change. Only the selected story changes; any impact on another story remains a separate suggestion. If the source story changed after generation, the stale proposal is rejected.
+6. Maria creates an intentionally oversized or duplicate story and runs backlog review. Findings remain independent: she can inspect, edit, apply or ignore one without applying its siblings. A split or merge preview explains criterion distribution, archived sources, ordering and the MVP-boundary effect before confirmation.
+7. Maria adds an unresolved question to the story. The readiness check lists every missing requirement and refuses `ready for development`. After resolving the question and meeting the criteria and mockup rules, the story can become ready. `Võta tagasi` restores the latest complete backlog mutation.
+8. Maria reloads the browser or restarts the app. The project, conversation, selected story, order, MVP boundary, criteria, mockup history and proposal state remain in SQLite. `Jätka siit` recommends the next stage from durable project state while Maria remains free to navigate elsewhere.
+
+This scenario also works without an AI provider: Maria can create and edit stories, criteria, questions, mockups, ordering, the MVP boundary, split/merge operations and readiness state manually.

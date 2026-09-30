@@ -2,6 +2,14 @@
 
 AI PM Tool is a project management workspace for turning a product idea into a development-ready backlog. The interface and project content are in Estonian by default. The product combines structured user stories, acceptance criteria, readiness checks and a clear MVP boundary. AI guidance is designed around human review and explicit confirmation.
 
+## Requirements
+
+- Node.js 24 LTS (Node.js 22.12 or newer is supported)
+- npm, included with Node.js
+- a local terminal and a modern browser
+
+SQLite is embedded. A database server and an AI key are not required.
+
 ## Local setup
 
 Use Node.js 24 LTS and npm. SQLite runs locally; no external database or AI key is required.
@@ -14,7 +22,9 @@ npm run db:seed
 npm run dev
 ```
 
-Open http://localhost:3000. The seed is optional and repeatable. Prisma Client is generated during installation. Database paths are relative to the repository root, and both migrations and runtime use the same `DATABASE_URL`. The default is `file:./prisma/dev.db`.
+Open http://localhost:3000. The seed is optional and repeatable: it creates the `Spordiklubi broneeringud` project once and never overwrites it. Prisma Client is generated during installation. Database paths are relative to the repository root, and both migrations and runtime use the same `DATABASE_URL`. The default is `file:./prisma/dev.db`.
+
+`.env.example` is safe to commit and documents every runtime setting. `DATABASE_URL` selects the SQLite file. `AI_PROVIDER="fixture"` enables the deterministic, offline demonstration. `AI_PROVIDER="openai"` requires both server-only `OPENAI_API_KEY` and `OPENAI_MODEL`; an empty or incomplete live configuration leaves AI unavailable while manual features continue to work. Do not add secrets to `.env.example` or use a `NEXT_PUBLIC_` variable for the API key.
 
 ## Validation
 
@@ -31,7 +41,25 @@ For a production run, use `npm run build` followed by `npm start`.
 
 Browser tests use port 3100, launch and restart the production server, and migrate an isolated temporary SQLite database. Run the build first and leave that port free. Service tests also use an isolated temporary database. Neither suite changes your development project data.
 
-If setup fails, check your Node version, run `npm run db:generate`, and confirm migrations and runtime use the same database URL. If Playwright reports a missing executable, run `npx playwright install chromium`. The local demo seed can be rerun without overwriting an existing demo project.
+### Troubleshooting
+
+- `npm ci` or Prisma reports an unsupported runtime: verify `node --version` is 22.12 or newer; Node.js 24 LTS is recommended.
+- Prisma Client is missing: run `npm run db:generate`.
+- A table does not exist or the schema is stale: confirm `.env` contains the intended `DATABASE_URL`, then run `npm run db:migrate`.
+- The app opens an unexpected or empty database: relative SQLite paths are resolved from the repository root. Start commands from that directory.
+- Port 3000 is busy: stop the other process or run `npm run dev -- --port 3001` and open the printed address.
+- AI says it is not configured: use fixture mode, or provide all three live-provider values and restart the server. Manual backlog work remains available.
+- Playwright cannot find Chromium: run `npx playwright install chromium`.
+- Browser tests cannot bind port 3100: stop the process using that port and rerun `npm run test:e2e`.
+- A clean local reset is needed: stop the app, move `prisma/dev.db` somewhere safe, rerun migration and seed, then restart. Moving the file preserves a recoverable backup.
+
+## Evaluation guides
+
+- [Usage scenario](docs/USAGE_SCENARIO.md) — one-page product walkthrough
+- [Demonstration script](docs/DEMO_SCRIPT.md) — repeatable 5–10 minute fixture-AI demo
+- [Development backlog](docs/DEVELOPMENT_BACKLOG.md) — delivery order, rationale and MVP line
+- [Feature status](docs/FEATURE_STATUS.md) and [known AI limitations](docs/AI_LIMITATIONS.md)
+- [Security review](docs/SECURITY_REVIEW.md) and [final acceptance matrix](docs/ACCEPTANCE_MATRIX.md)
 
 ## Architecture and scope
 
