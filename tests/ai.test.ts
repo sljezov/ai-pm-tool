@@ -143,6 +143,35 @@ describe("persistent guided conversation", () => {
     await client.$disconnect(); client = createDatabaseClient(databaseUrl);
     expect((await conversationService(client).get(project.id)).messages).toEqual(result.messages);
   });
+  it("a two-question batch waits for the second answer instead of asking the model again mid-batch", async () => {
+    const project = await projectService(client).create({ name: "Kaksikküsimus" });
+    const calls: string[] = [];
+    const twoQuestions: AiProvider = {
+      async generateStructured<T>(request: AiRequest) {
+        calls.push(request.task);
+        if (request.task === "clarify_idea") return {
+          message: "Kaks küsimust korraga.", nextActions: [{ id: "text", label: "Täpsustan", action: "write_text" }],
+          payload: { questions: [
+            { id: "q1", text: "Esimene küsimus?", selectionMode: "single", options: [{ id: "a", label: "A" }, { id: "b", label: "B" }] },
+            { id: "q2", text: "Teine küsimus?", selectionMode: "single", options: [{ id: "c", label: "C" }, { id: "d", label: "D" }] },
+          ] },
+        } as T;
+        return fixture.generateStructured<T>(request);
+      },
+    };
+    const service = conversationService(client, twoQuestions);
+    let result = await service.submit(project.id, { kind: "text", text: "Idee" });
+    const asked = result.messages.find(m => m.response)!;
+    expect(asked.response?.payload).toMatchObject({ questions: [{ id: "q1" }, { id: "q2" }] });
+    result = await service.submit(project.id, { kind: "answer", messageId: asked.id, questionId: "q1", optionIds: ["a"], skip: false });
+    expect(result.messages.map(m => m.role)).toEqual(["user", "assistant", "user"]);
+    expect(result.messages[2]).toMatchObject({ requestStatus: "complete", answeredQuestionIds: ["q1"] });
+    expect(calls).toEqual(["clarify_idea"]);
+    result = await service.submit(project.id, { kind: "answer", messageId: asked.id, questionId: "q2", optionIds: ["c"], skip: false });
+    expect(result.messages.map(m => m.role)).toEqual(["user", "assistant", "user", "user", "assistant"]);
+    expect(result.messages[4].response?.payload).toHaveProperty("roles");
+    expect(calls).toEqual(["clarify_idea", "propose_roles"]);
+  });
   it("Other and Skip persist, regenerate supersedes only pending sibling roles", async () => {
     for (const answer of [{ optionIds: [], other: "Treenerite graafikud", skip: false }, { optionIds: [], skip: true }]) {
       const project = await projectService(client).create({ name: "Valikud" }); const service = conversationService(client, fixture);

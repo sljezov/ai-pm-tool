@@ -55,6 +55,7 @@ export function conversationService(client: PrismaClient, provider?: AiProvider)
     let task: ConversationTask = "clarify_idea";
     let userMessageId: string;
     let answeredQuestionIds: string[] = [];
+    let batchIncomplete = false;
     const history = await get(id);
     const latestResponse = [...history.messages].reverse().find(message => message.response);
     const existingExecution = requestKey ? await client.requestExecution.findUnique({ where: { projectId_requestKey: { projectId: id, requestKey } } }) : null;
@@ -91,17 +92,21 @@ export function conversationService(client: PrismaClient, provider?: AiProvider)
         if (new Set(input.optionIds).size !== input.optionIds.length || options.length !== input.optionIds.length || (question.selectionMode === "single" && options.length > 1) || (input.skip && (options.length || input.other)) || (!input.skip && !options.length && !input.other)) throw new BacklogError("Vali vastus, kirjuta muu vastus või jäta küsimus vahele.", 400);
         text = `${question.text}\n${input.skip ? "Jäta vahele" : [...options.map(option => option.label), ...(input.other ? [`Muu: ${input.other}`] : [])].join(", ")}`;
         answeredQuestionIds = [question.id];
-        task = source.response.payload.questions.every(item => item.id === question.id || previous.includes(item.id)) ? "propose_roles" : "clarify_idea";
+        const batchDone = source.response.payload.questions.every(item => item.id === question.id || previous.includes(item.id));
+        task = batchDone ? "propose_roles" : "clarify_idea";
+        batchIncomplete = !batchDone;
       } else {
         text = input.text;
         task = input.task ?? (current.currentStage === "refinements" || current.currentStage === "prototype" && current.recommendedNextStage === "refinements" ? "propose_refinement" : latestResponse?.task ?? "clarify_idea");
       }
       const message = await client.$transaction(async tx => {
-        const created = await tx.conversationMessage.create({ data: { projectId: id, role: "user", messageType: input.kind, content: text, structuredPayloadJson: JSON.stringify({ task, status: "processing", answeredQuestionIds }) } });
-        if (requestKey) await tx.requestExecution.create({ data: { projectId: id, requestKey, scope: "conversation", status: "processing", resourceId: created.id } });
+        const created = await tx.conversationMessage.create({ data: { projectId: id, role: "user", messageType: input.kind, content: text, structuredPayloadJson: JSON.stringify({ task, status: batchIncomplete ? "complete" : "processing", answeredQuestionIds }) } });
+        if (requestKey) await tx.requestExecution.create({ data: { projectId: id, requestKey, scope: "conversation", status: batchIncomplete ? "complete" : "processing", resourceId: created.id, ...(batchIncomplete ? { completedAt: new Date() } : {}) } });
         return created;
       });
       userMessageId = message.id;
+      // Other questions in this same batch are still open; wait for them instead of asking the model again mid-batch.
+      if (batchIncomplete) return get(id);
     }
     if (task === "propose_stories" && !current.roles.some(role => role.isPrimary)) {
       await client.$transaction(async tx => { await tx.conversationMessage.update({ where: { id: userMessageId }, data: { structuredPayloadJson: JSON.stringify({ task, status: "failed", answeredQuestionIds }) } }); if (requestKey) await tx.requestExecution.update({ where: { projectId_requestKey: { projectId: id, requestKey } }, data: { status: "failed" } }); });
