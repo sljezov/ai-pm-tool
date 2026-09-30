@@ -9,7 +9,7 @@ import { storyService } from "@/services/stories/service";
 import { conversationService } from "@/services/ai-orchestration/service";
 import { proposalWorkflowService } from "@/services/proposals/workflow";
 import { clarificationSchema, priorityRecommendationSchema, roleProposalSchema, storyProposalSchema, prototypePayloadSchema, type PrototypePayload } from "@/domain/ai/contracts";
-import { AiInvalidOutputError, AiUnavailableError, FixtureAiProvider, OpenAiProvider, generateValidated, type AiProvider, type AiRequest } from "@/lib/ai/provider";
+import { AiInvalidOutputError, AiUnavailableError, AnthropicProvider, FixtureAiProvider, OpenAiProvider, aiMode, generateValidated, type AiProvider, type AiRequest } from "@/lib/ai/provider";
 
 const fixture = new FixtureAiProvider();
 async function valid(task: "clarify_idea" | "propose_roles" = "clarify_idea") { return fixture.generateStructured<unknown>({ task, systemInstructions: "", context: {}, outputSchema: {} }); }
@@ -65,6 +65,36 @@ describe("validated AI boundary", () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ status: "completed", output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify(await valid()) }] }] }), { status: 200 }));
     vi.stubGlobal("fetch", fetcher);
     await expect(generateValidated(new OpenAiProvider(), "clarify_idea", {})).resolves.toMatchObject({ payload: { questions: expect.any(Array) } });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+  it("selects the anthropic provider only when configured and never falls back to openai by accident", () => {
+    vi.stubEnv("AI_PROVIDER", "anthropic");
+    expect(aiMode()).toBe("unavailable");
+    vi.stubEnv("ANTHROPIC_API_KEY", "secret-test-key"); vi.stubEnv("ANTHROPIC_MODEL", "configured-test-model");
+    expect(aiMode()).toBe("live");
+  });
+  it("anthropic provider uses server-only authorization, a forced tool call and safe errors", async () => {
+    vi.stubEnv("ANTHROPIC_API_KEY", "secret-test-key"); vi.stubEnv("ANTHROPIC_MODEL", "configured-test-model");
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({ stop_reason: "tool_use", content: [{ type: "tool_use", name: "respond", input: await valid() }] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetcher);
+    await generateValidated(new AnthropicProvider(), "clarify_idea", { input: "Spordiklubi" });
+    const request = fetcher.mock.calls[0] as unknown as [string, RequestInit];
+    expect(request[0]).toBe("https://api.anthropic.com/v1/messages");
+    expect(request[1].headers).toMatchObject({ "x-api-key": "secret-test-key" });
+    const body = JSON.parse(request[1].body as string);
+    expect(body).toMatchObject({ model: "configured-test-model", tool_choice: { type: "tool", name: "respond" } });
+    expect(body.tools).toMatchObject([{ name: "respond" }]);
+    expect(request[1].body).not.toContain("secret-test-key");
+    fetcher.mockImplementationOnce(async () => new Response("secret-test-key provider trace", { status: 401 }));
+    await expect(generateValidated(new AnthropicProvider(), "clarify_idea", {})).rejects.toBeInstanceOf(AiUnavailableError);
+  });
+  it("treats an anthropic refusal or a missing tool call as repairable invalid output", async () => {
+    vi.stubEnv("ANTHROPIC_API_KEY", "secret-test-key"); vi.stubEnv("ANTHROPIC_MODEL", "configured-test-model");
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ stop_reason: "refusal", content: [] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ stop_reason: "tool_use", content: [{ type: "tool_use", name: "respond", input: await valid() }] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetcher);
+    await expect(generateValidated(new AnthropicProvider(), "clarify_idea", {})).resolves.toMatchObject({ payload: { questions: expect.any(Array) } });
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
   it("rejects already-answered questions after one repair", async () => {
