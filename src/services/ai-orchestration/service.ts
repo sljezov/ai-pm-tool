@@ -5,6 +5,7 @@ import { aiMode, configuredProvider, generateValidated, AiInvalidOutputError, Ai
 import { projectIdSchema } from "@/lib/validation/projects";
 import { BacklogError } from "@/lib/validation/backlog";
 import { storyInclude } from "@/services/stories/service";
+import { processingLeaseMs } from "@/services/requests/idempotency";
 
 function decode(raw: string | null): Record<string, unknown> { try { return raw ? JSON.parse(raw) : {}; } catch { return {}; } }
 function isTask(value: unknown): value is ConversationTask { return typeof value === "string" && Object.hasOwn(taskSchemas, value); }
@@ -18,7 +19,20 @@ export function conversationService(client: PrismaClient, provider?: AiProvider)
   }
   async function get(id: string): Promise<ConversationData> {
     const current = await project(id);
-    const rows = await client.conversationMessage.findMany({ where: { projectId: id }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
+    const expired = await client.requestExecution.findMany({ where: { projectId: id, scope: "conversation", status: "processing", updatedAt: { lt: new Date(Date.now() - processingLeaseMs) }, resourceId: { not: null } } });
+    if (expired.length) await client.$transaction(async tx => {
+      for (const execution of expired) {
+        const message = await tx.conversationMessage.findFirst({ where: { id: execution.resourceId!, projectId: id, role: "user" } });
+        if (message) await tx.conversationMessage.update({ where: { id: message.id }, data: { structuredPayloadJson: JSON.stringify({ ...decode(message.structuredPayloadJson), status: "failed" }) } });
+        await tx.requestExecution.update({ where: { id: execution.id }, data: { status: "failed" } });
+      }
+    });
+    let rows = await client.conversationMessage.findMany({ where: { projectId: id }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
+    const staleRows = rows.filter(row => row.role === "user" && row.createdAt.getTime() < Date.now() - processingLeaseMs && decode(row.structuredPayloadJson).status === "processing");
+    if (staleRows.length) {
+      await client.$transaction(staleRows.map(row => client.conversationMessage.update({ where: { id: row.id }, data: { structuredPayloadJson: JSON.stringify({ ...decode(row.structuredPayloadJson), status: "failed" }) } })));
+      rows = await client.conversationMessage.findMany({ where: { projectId: id }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
+    }
     const proposalIds = rows.flatMap(row => { const stored = decode(row.structuredPayloadJson); const value = stored.proposalId; const findings = Array.isArray(stored.findingProposals) ? stored.findingProposals as Array<{ proposalId: string }> : []; return [...(typeof value === "string" ? [value] : []), ...findings.map(item => item.proposalId)]; });
     const statuses = new Map((proposalIds.length ? await client.proposal.findMany({ where: { projectId: id, id: { in: proposalIds } }, select: { id: true, status: true, beforeSnapshotJson: true } }) : []).map(item => [item.id, item]));
     return {
@@ -34,7 +48,7 @@ export function conversationService(client: PrismaClient, provider?: AiProvider)
       }),
     };
   }
-  async function submit(id: string, raw: unknown): Promise<ConversationData> {
+  async function submit(id: string, raw: unknown, requestKey?: string): Promise<ConversationData> {
     const input = conversationInputSchema.parse(raw);
     const current = await project(id);
     let text: string;
@@ -43,8 +57,13 @@ export function conversationService(client: PrismaClient, provider?: AiProvider)
     let answeredQuestionIds: string[] = [];
     const history = await get(id);
     const latestResponse = [...history.messages].reverse().find(message => message.response);
-    if (input.kind === "retry") {
-      const message = await client.conversationMessage.findFirst({ where: { id: input.messageId, projectId: id, role: "user" } });
+    const existingExecution = requestKey ? await client.requestExecution.findUnique({ where: { projectId_requestKey: { projectId: id, requestKey } } }) : null;
+    if (existingExecution?.scope !== undefined && existingExecution.scope !== "conversation") throw new BacklogError("Päringu võti on juba teise toimingu jaoks kasutatud.", 409);
+    if (existingExecution?.status === "complete") return get(id);
+    if (existingExecution?.status === "processing") throw new BacklogError("Päring on juba töös.", 409);
+    const resumedMessage = existingExecution?.resourceId ? await client.conversationMessage.findFirst({ where: { id: existingExecution.resourceId, projectId: id, role: "user" } }) : null;
+    if (input.kind === "retry" || resumedMessage) {
+      const message = resumedMessage ?? await client.conversationMessage.findFirst({ where: { id: input.kind === "retry" ? input.messageId : "", projectId: id, role: "user" } });
       if (!message) throw new BacklogError("Sõnumit ei leitud.", 404);
       const state = decode(message.structuredPayloadJson);
       if (state.status === "complete") return get(id);
@@ -52,7 +71,12 @@ export function conversationService(client: PrismaClient, provider?: AiProvider)
       task = isTask(state.task) ? state.task : "clarify_idea";
       text = message.content;
       answeredQuestionIds = Array.isArray(state.answeredQuestionIds) ? state.answeredQuestionIds.filter((value): value is string => typeof value === "string") : [];
-      const claim = await client.conversationMessage.updateMany({ where: { id: message.id, projectId: id, structuredPayloadJson: message.structuredPayloadJson }, data: { structuredPayloadJson: JSON.stringify({ ...state, status: "processing" }) } });
+      const claim = await client.$transaction(async tx => {
+        const updated = await tx.conversationMessage.updateMany({ where: { id: message.id, projectId: id, structuredPayloadJson: message.structuredPayloadJson }, data: { structuredPayloadJson: JSON.stringify({ ...state, status: "processing" }) } });
+        if (requestKey && existingExecution) await tx.requestExecution.update({ where: { id: existingExecution.id }, data: { status: "processing" } });
+        else if (requestKey) await tx.requestExecution.create({ data: { projectId: id, requestKey, scope: "conversation", status: "processing", resourceId: message.id } });
+        return updated;
+      });
       if (!claim.count) throw new BacklogError("Päring on juba töös.", 409);
       userMessageId = message.id;
     } else {
@@ -72,19 +96,23 @@ export function conversationService(client: PrismaClient, provider?: AiProvider)
         text = input.text;
         task = input.task ?? (current.currentStage === "refinements" || current.currentStage === "prototype" && current.recommendedNextStage === "refinements" ? "propose_refinement" : latestResponse?.task ?? "clarify_idea");
       }
-      const message = await client.conversationMessage.create({ data: { projectId: id, role: "user", messageType: input.kind, content: text, structuredPayloadJson: JSON.stringify({ task, status: "processing", answeredQuestionIds }) } });
+      const message = await client.$transaction(async tx => {
+        const created = await tx.conversationMessage.create({ data: { projectId: id, role: "user", messageType: input.kind, content: text, structuredPayloadJson: JSON.stringify({ task, status: "processing", answeredQuestionIds }) } });
+        if (requestKey) await tx.requestExecution.create({ data: { projectId: id, requestKey, scope: "conversation", status: "processing", resourceId: created.id } });
+        return created;
+      });
       userMessageId = message.id;
     }
     if (task === "propose_stories" && !current.roles.some(role => role.isPrimary)) {
-      await client.conversationMessage.update({ where: { id: userMessageId }, data: { structuredPayloadJson: JSON.stringify({ task, status: "failed", answeredQuestionIds }) } });
+      await client.$transaction(async tx => { await tx.conversationMessage.update({ where: { id: userMessageId }, data: { structuredPayloadJson: JSON.stringify({ task, status: "failed", answeredQuestionIds }) } }); if (requestKey) await tx.requestExecution.update({ where: { projectId_requestKey: { projectId: id, requestKey } }, data: { status: "failed" } }); });
       throw new BacklogError("Kinnita esmalt rollid ja vali peamine roll.", 409);
     }
     if (task === "recommend_priority" && !current.stories.length) {
-      await client.conversationMessage.update({ where: { id: userMessageId }, data: { structuredPayloadJson: JSON.stringify({ task, status: "failed", answeredQuestionIds }) } });
+      await client.$transaction(async tx => { await tx.conversationMessage.update({ where: { id: userMessageId }, data: { structuredPayloadJson: JSON.stringify({ task, status: "failed", answeredQuestionIds }) } }); if (requestKey) await tx.requestExecution.update({ where: { projectId_requestKey: { projectId: id, requestKey } }, data: { status: "failed" } }); });
       throw new BacklogError("Lisa enne backlogi vähemalt üks lugu.", 409);
     }
     if ((task === "propose_prototype" || task === "propose_refinement") && !current.stories.some(story => story.id === current.selectedStoryId)) {
-      await client.conversationMessage.update({ where: { id: userMessageId }, data: { structuredPayloadJson: JSON.stringify({ task, status: "failed", answeredQuestionIds }) } });
+      await client.$transaction(async tx => { await tx.conversationMessage.update({ where: { id: userMessageId }, data: { structuredPayloadJson: JSON.stringify({ task, status: "failed", answeredQuestionIds }) } }); if (requestKey) await tx.requestExecution.update({ where: { projectId_requestKey: { projectId: id, requestKey } }, data: { status: "failed" } }); });
       throw new BacklogError(task === "propose_refinement" ? "Vali backlogist lugu, mida kliendi täpsustusega muuta." : "Vali backlogist lugu, millele kriteeriumid ja mockup koostada.", 409);
     }
     const requestState = { task, answeredQuestionIds };
@@ -125,12 +153,14 @@ export function conversationService(client: PrismaClient, provider?: AiProvider)
         }
         await tx.conversationMessage.create({ data: { projectId: id, role: "assistant", messageType: task, content: response.message, structuredPayloadJson: JSON.stringify({ task, response, proposalId, findingProposals, replyTo: userMessageId }) } });
         await tx.conversationMessage.update({ where: { id: userMessageId }, data: { structuredPayloadJson: JSON.stringify({ ...requestState, status: "complete" }) } });
+        if (requestKey) await tx.requestExecution.update({ where: { projectId_requestKey: { projectId: id, requestKey } }, data: { status: "complete", completedAt: new Date() } });
       });
     } catch (error) {
       const safe = error instanceof AiInvalidOutputError ? error : new AiUnavailableError();
       await client.$transaction(async tx => {
         await tx.conversationMessage.update({ where: { id: userMessageId }, data: { structuredPayloadJson: JSON.stringify({ ...requestState, status: "failed" }) } });
         await tx.conversationMessage.create({ data: { projectId: id, role: "system_event", messageType: "ai_error", content: safe.message, structuredPayloadJson: JSON.stringify({ replyTo: userMessageId }) } });
+        if (requestKey) await tx.requestExecution.update({ where: { projectId_requestKey: { projectId: id, requestKey } }, data: { status: "failed" } });
       });
     }
     return get(id);

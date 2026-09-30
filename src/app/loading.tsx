@@ -1,1 +1,1 @@
-export default function Loading() { return <main className="projects-page" aria-busy="true"><p role="status">Avan tööruumi…</p></main>; }
+export default function Loading() { return <main className="projects-page loading-page" aria-busy="true"><div className="loading-block" aria-hidden="true" /><p role="status">Avan tööruumi ja taastan salvestatud seisu…</p></main>; }

@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { ManualGrooming } from "@/components/backlog/grooming";
 import { MockupEditor } from "@/components/mockup/editor";
 import { mockupElementIds } from "@/domain/criteria/validation";
@@ -51,6 +51,7 @@ function QuestionForm({ storyId, question, mutate, busy }: { storyId: string; qu
 }
 export function Backlog({ projectId, initial }: { projectId: string; initial: BacklogData }) {
  const router = useRouter(); const [data, setData] = useState(initial); const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [notice, setNotice] = useState("");
+ const submitting = useRef(false);
  const [issues, setIssues] = useState<ReadinessIssue[]>([]); const [creating, setCreating] = useState(false); const [dragId, setDragId] = useState<string | null>(null);
  useEffect(() => {
   async function sync(event: Event) {
@@ -61,26 +62,27 @@ export function Backlog({ projectId, initial }: { projectId: string; initial: Ba
  }, [projectId]);
  const story = data.stories.find(item => item.id === data.selectedStoryId);
  async function mutate(command: Command) {
-  if (busy) return false; setBusy(true); setError(""); setIssues([]); setNotice("");
+  if (submitting.current) return false; submitting.current = true; setBusy(true); setError(""); setIssues([]); setNotice("");
   try {
-   const response = await fetch(`/api/projects/${projectId}/backlog`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(command) }); const result = await response.json();
+   const response = await fetch(`/api/projects/${projectId}/backlog`, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() }, body: JSON.stringify(command) }); const result = await response.json();
    if (!response.ok) { setIssues(result.issues ?? []); throw new Error(result.error); }
    if (command.type === "archive_story" && data.mvpBoundaryAfterStoryId === command.storyId) setNotice("MVP piir eemaldati koos looga. Määra MVP piir uuesti.");
    if (command.type !== "select" && command.type !== "undo") setNotice(previous => previous || "Muudatus salvestatud. Saad viimase muudatuse tagasi võtta.");
    if (command.type === "undo") setNotice("Viimane muudatus on tagasi võetud.");
    setData(result); router.refresh(); return true;
   } catch (cause) { setError(cause instanceof Error ? cause.message : "Salvestamine ebaõnnestus."); return false; }
-  finally { setBusy(false); }
+  finally { submitting.current = false; setBusy(false); }
  }
  function move(id: string, destination: number) {
   const ids = data.stories.map(item => item.id); const position = ids.indexOf(id); if (position < 0 || destination < 0 || destination >= ids.length || destination === position) return;
   ids.splice(position, 1); ids.splice(destination, 0, id); void mutate({ type: "reorder", storyIds: ids });
  }
  const areaId = (area: ReadinessIssue["area"]) => `story-${area}`;
- return <div className="manual-backlog">
+ return <div className="manual-backlog" aria-busy={busy}>
   <div className="backlog-heading"><h2>Backlog</h2><span className="count-badge">{data.stories.length}</span></div>
   <div className="actions"><button disabled={busy} onClick={() => { setCreating(!creating); setError(""); setIssues([]); }}>Uus lugu</button><button disabled={busy || !data.canUndo} onClick={() => mutate({ type: "undo" })}>Võta tagasi</button></div>
   {notice && <p role="status" className="muted">{notice}</p>}
+  {busy && <p role="status" className="muted">Salvestan muudatust…</p>}
   {error && <div role="alert" className="error"><p>{error}</p>{issues.length > 0 && <ul>{issues.map((issue, i) => <li key={i}><a href={`#${areaId(issue.area)}`}>{issue.message}</a></li>)}</ul>}</div>}
   {creating && <section className="story-create"><h3>Uus kasutajalugu</h3><StoryForm mutate={mutate} busy={busy} close={() => setCreating(false)} /></section>}
   {!data.stories.length && <div className="backlog-empty"><h3>Lugude jaoks on ruumi.</h3><p>Lisa esimene kasutajalugu käsitsi. AI võtit pole vaja.</p></div>}

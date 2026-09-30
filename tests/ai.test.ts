@@ -84,6 +84,19 @@ describe("persistent guided conversation", () => {
     execFileSync(process.execPath, [resolve("node_modules/prisma/build/index.js"), "migrate", "deploy"], { env: { ...process.env, DATABASE_URL: databaseUrl }, stdio: "pipe" }); client = createDatabaseClient(databaseUrl);
   }, 30_000);
   afterAll(async () => { await client?.$disconnect(); if (directory) await rm(directory, { recursive: true, force: true }); });
+  it("deduplicates completed AI requests and recovers an expired processing request", async () => {
+    const project = await projectService(client).create({ name: "Taastamine" }); const service = conversationService(client, fixture);
+    const input = { kind: "text" as const, text: "Idee" }; const key = "conversation-request-01";
+    const first = await service.submit(project.id, input, key); const repeated = await service.submit(project.id, input, key);
+    expect(repeated.messages).toEqual(first.messages);
+    const interrupted = await client.conversationMessage.create({ data: { projectId: project.id, role: "user", messageType: "text", content: "Katkenud", structuredPayloadJson: JSON.stringify({ task: "clarify_idea", status: "processing", answeredQuestionIds: [] }) } });
+    await client.requestExecution.create({ data: { projectId: project.id, requestKey: "expired-request-01", scope: "conversation", status: "processing", resourceId: interrupted.id, updatedAt: new Date(Date.now() - 120_000) } });
+    const orphan = await client.conversationMessage.create({ data: { projectId: project.id, role: "user", messageType: "text", content: "Vana katkenud", structuredPayloadJson: JSON.stringify({ task: "clarify_idea", status: "processing", answeredQuestionIds: [] }), createdAt: new Date(Date.now() - 120_000) } });
+    const recovered = await service.get(project.id);
+    expect(recovered.messages.find(message => message.id === interrupted.id)?.requestStatus).toBe("failed");
+    expect(recovered.messages.find(message => message.id === orphan.id)?.requestStatus).toBe("failed");
+    expect(await client.requestExecution.findUniqueOrThrow({ where: { projectId_requestKey: { projectId: project.id, requestKey: "expired-request-01" } } })).toMatchObject({ status: "failed" });
+  });
   it("one vague sentence asks a question; choices produce only pending roles and survive reconnect", async () => {
     const project = await projectService(client).create({ name: "Spordiklubi", description: "Treeningud" });
     const service = conversationService(client, fixture);

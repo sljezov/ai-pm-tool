@@ -10,13 +10,16 @@ import { backlogSnapshot, recordBacklogChange, storyInclude } from "@/services/s
 import { checkCriterion, mockupElementIds } from "@/domain/criteria/validation";
 import { calculateReadiness } from "@/domain/readiness/readiness";
 import { appendMockup } from "@/services/mockups/service";
+import { claimTransactionalRequest, completeTransactionalRequest } from "@/services/requests/idempotency";
 
 export function proposalWorkflowService(client: PrismaClient) {
   return {
-    async confirm(projectIdRaw: string, raw: unknown) {
+    async confirm(projectIdRaw: string, raw: unknown, requestKey?: string) {
       const projectId = projectIdSchema.parse(projectIdRaw);
       const command = proposalCommandSchema.parse(raw);
       await client.$transaction(async tx => {
+        if (await claimTransactionalRequest(tx, projectId, requestKey, "proposal") === "complete") return;
+        try {
         const proposal = await tx.proposal.findFirst({ where: { id: command.proposalId, projectId } });
         if (!proposal) throw new BacklogError("Ettepanekut ei leitud.", 404);
         if (proposal.status === "applied") return;
@@ -148,6 +151,9 @@ export function proposalWorkflowService(client: PrismaClient) {
         for (const [position, story] of ordered.entries()) await tx.story.update({ where: { id: story.id }, data: { position } });
         await tx.project.update({ where: { id: projectId }, data: { selectedStoryId: chosen.id, currentStage: "prototype", recommendedNextStage: "prototype", updatedAt: new Date() } });
         await recordBacklogChange(tx, projectId, "apply_priority_proposal", proposal.id, before);
+        } finally {
+          await completeTransactionalRequest(tx, projectId, requestKey);
+        }
       });
     },
   };

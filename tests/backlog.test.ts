@@ -23,6 +23,13 @@ describe("manual backlog invariants", () => {
   expect(checkCriterion("Nupp kuvab kinnituse.").status).toBe("warning");
   expect(checkCriterion("Nupp kuvab kinnituse.", ["missing"], ["valid"]).status).toBe("fail");
  });
+ it("deduplicates a repeated mutation request inside the backlog transaction", async () => {
+  const { id, service } = await setup(); const key = "same-request-01";
+  await service.mutate(id, { type: "create_story", ...input }, key);
+  const repeated = await service.mutate(id, { type: "create_story", ...input }, key);
+  expect(repeated.stories).toHaveLength(1);
+  expect(await client.requestExecution.findUnique({ where: { projectId_requestKey: { projectId: id, requestKey: key } } })).toMatchObject({ scope: "backlog", status: "complete" });
+ });
  it("reports all readiness failures and distrusts cached validation", async () => {
   const { id, service } = await setup(); let data = await service.mutate(id, { type: "create_story", ...input, role: "", requiresMockup: true }); const story = data.stories[0];
   await service.mutate(id, { type: "create_question", storyId: story.id, text: "Kas maks on lisatud?" });

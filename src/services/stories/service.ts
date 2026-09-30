@@ -7,6 +7,7 @@ import { checkCriterion, mockupElementIds, parseCriterionReferences } from "@/do
 import { calculateReadiness } from "@/domain/readiness/readiness";
 import { appendMockup } from "@/services/mockups/service";
 import { restoreBacklogSnapshot } from "@/services/undo/service";
+import { claimTransactionalRequest, completeTransactionalRequest } from "@/services/requests/idempotency";
 
 export const storyInclude = { criteria: { orderBy: { position: "asc" as const } }, openQuestions: { orderBy: [{ createdAt: "asc" as const }, { id: "asc" as const }] }, mockupVersions: { orderBy: { version: "desc" as const } } };
 export async function backlogSnapshot(tx: Prisma.TransactionClient, projectId: string) {
@@ -36,10 +37,12 @@ export function storyService(client: PrismaClient) {
       }), readiness: calculateReadiness(story) };
     }), canUndo: !!latest && !latest.undoneAt };
   }
-  return { get, async mutate(projectId: string, input: unknown) {
+  return { get, async mutate(projectId: string, input: unknown, requestKey?: string) {
     projectIdSchema.parse(projectId);
     const command = backlogCommandSchema.parse(input);
     await client.$transaction(async tx => {
+      if (await claimTransactionalRequest(tx, projectId, requestKey, "backlog") === "complete") return;
+      try {
       if (command.type === "split_story" || command.type === "merge_stories") { await applyGrooming(tx, projectId, command); return; }
       const before = await backlogSnapshot(tx, projectId);
       const active = before.stories.filter(story => !story.archivedAt);
@@ -120,6 +123,9 @@ export function storyService(client: PrismaClient) {
       }
       await tx.project.update({ where: { id: projectId }, data: { updatedAt: new Date() } });
       await recordBacklogChange(tx, projectId, command.type, changedStoryId ?? projectId, before);
+      } finally {
+        await completeTransactionalRequest(tx, projectId, requestKey);
+      }
     });
     return get(projectId);
   } };

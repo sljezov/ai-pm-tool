@@ -37,7 +37,7 @@ export function Conversation({ projectId, initial }: { projectId: string; initia
   const latest = [...data.messages].reverse().find(message => message.response); const answeredIds = data.messages.flatMap(message => message.answeredQuestionIds);
   async function request(method: "POST" | "PATCH", input: unknown) {
     if (submitting.current) return; submitting.current = true; setBusy(true); setError("");
-    try { const response = await fetch(`/api/projects/${projectId}/conversation`, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) }); const result = await response.json(); if (!response.ok) throw new Error(result.error); setData(result); if (method === "PATCH") window.dispatchEvent(new CustomEvent("backlog-updated", { detail: projectId })); router.refresh(); if (method === "POST" && (input as ConversationInput).kind === "text") setText(""); }
+    try { const response = await fetch(`/api/projects/${projectId}/conversation`, { method, headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() }, body: JSON.stringify(input) }); const result = await response.json(); if (!response.ok) throw new Error(result.error); setData(result); if (method === "PATCH") window.dispatchEvent(new CustomEvent("backlog-updated", { detail: projectId })); router.refresh(); if (method === "POST" && (input as ConversationInput).kind === "text") setText(""); }
     catch (cause) { setError(cause instanceof Error ? cause.message : "Päring ebaõnnestus. Proovi uuesti."); try { const response = await fetch(`/api/projects/${projectId}/conversation`); if (response.ok) setData(await response.json()); } catch { /* Manual controls remain available. */ } }
     finally { submitting.current = false; setBusy(false); }
   }
