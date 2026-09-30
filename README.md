@@ -1,6 +1,6 @@
 # AI PM Tool
 
-Eestikeelne projektijuhi tööruum ideest arendusvalmis backlog’ini. Agent 1 implements the foundation and persistent project workspace (WP-00 / WP-01); later work packages add backlog editing and AI proposals.
+AI PM Tool is a project management workspace for turning a product idea into a development-ready backlog. The interface and project content are in Estonian by default. The product combines structured user stories, acceptance criteria, readiness checks and a clear MVP boundary. AI guidance is designed around human review and explicit confirmation.
 
 ## Local setup
 
@@ -35,12 +35,18 @@ If setup fails, check your Node version, run `npm run db:generate`, and confirm 
 
 ## Architecture and scope
 
-Next.js App Router and React provide the interface. Validated route handlers call project services and repositories; only server code accesses Prisma and SQLite. The core database schema prepares the relationships for later work packages without implementing their workflows.
+Next.js App Router and React provide the interface. Validated route handlers call project services and repositories; only server code accesses Prisma and SQLite. Domain checks are deterministic, and services own transactions and project-scoped access. Backlog state comes from SQLite rather than conversation history.
 
-Project creation, listing, reopening, and non-linear stage navigation are implemented. Project data and the current stage persist in SQLite. The recommended stage starts at `idea`; calculating recommendations from domain state belongs to WP-09. Conversation, manual story editing, wireframes, AI, and undo are subsequent work packages and are labelled accordingly in the workspace.
+Create a project, describe its idea and navigate freely between process stages. Projects, backlog data and the selected stage persist across reloads and server restarts.
+
+The Backlog panel supports creating and editing separate role/action/benefit fields, status, size, acceptance criteria and open questions. Reorder with up/down buttons or drag-and-drop. The MVP boundary follows its story and clears when that story is archived. The selected story persists. On mobile, open the Backlog tab.
+
+Criteria show deterministic validation feedback. Ready status requires three passing criteria, complete story wording, resolved questions and a mockup for UI stories. Nonvisual stories can disable the mockup requirement. Failed ready transitions return all missing requirements without changing the story. Later changes that invalidate a ready story set it to `needs_clarification`. The mockup requirement applies only to stories that need a user interface.
+
+`Võta tagasi` restores the latest backlog mutation, including criteria, questions, order and MVP boundary. Undo is one level; selecting a story does not replace the undo target. Archived stories remain for audit. Manual operations require no AI key.
 
 The application is a single local workspace with no authentication. Do not expose it as a shared public service.
 
-See [implementation spec](docs/IMPLEMENTATION_SPEC.md) and [agent handoff](docs/HANDOFF.md).
+The [implementation specification](docs/IMPLEMENTATION_SPEC.md) describes the complete product, domain rules and intended workflows.
 
-The foundation checks pass, including server-restart persistence. The current npm audit reports four high-severity entries in transitive Prisma development tooling; details and follow-up are recorded in the handoff.
+AI conversation, proposal generation, wireframe rendering and story split/merge are not available yet. These controls are identified in the workspace. Manual backlog management works independently of these capabilities.
