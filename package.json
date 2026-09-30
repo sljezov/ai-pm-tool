@@ -13,8 +13,8 @@
     "test": "vitest run",
     "test:e2e": "playwright test",
     "db:generate": "prisma generate",
-    "db:migrate": "prisma migrate deploy",
-    "db:seed": "tsx prisma/seed.ts",
+    "db:migrate": "node --env-file-if-exists=.env scripts/ensure-sqlite-file.mjs && prisma migrate deploy",
+    "db:seed": "node --import tsx prisma/seed.ts",
     "postinstall": "prisma generate"
   },
   "dependencies": {
