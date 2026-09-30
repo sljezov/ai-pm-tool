@@ -2,7 +2,7 @@
 
 ## completed work package
 
-WP-04 — AI infrastructure and guided clarification. WP-00 through WP-03 remain passing.
+WP-05 — story proposals and priority. WP-00 through WP-04 remain passing.
 
 ## implementation convention for every agent
 
@@ -14,75 +14,71 @@ WP-04 — AI infrastructure and guided clarification. WP-00 through WP-03 remain
 
 ## implemented
 
-- Server-only AiProvider boundary, OpenAI Responses adapter, deterministic explicitly marked fixture provider and unconfigured-provider mode.
-- Live provider uses server-side credentials, configured model, strict JSON-schema output, storage disabled and a 25-second timeout per attempt. No new dependencies.
-- Strict bounded clarification/role response envelopes, unique question/option/role identifiers, one to four allowlisted next actions, one repair attempt and complete rejection of invalid output.
-- Fresh task-relevant project/role context, bounded recent conversation, explicit proposal-only mutation boundary and free-text clarification/role adjustment path.
-- Project-scoped persistent user, assistant and safe failure messages. Accepted role output creates a pending Proposal; regeneration supersedes older pending role proposals atomically. Generating output never changes ProjectRole, Story or ChangeEvent.
-- Retry claims a failed persisted user message, reuses it, and safely returns the existing result after completion. Provider errors and diagnostics are not persisted or returned.
-- Conversation UI across stages, single/multiple choice buttons, Other text and Skip on every question, next actions, loading/unavailable states and per-message retry.
-- Manual backlog remains independent of conversation request state and AI availability.
-- README and environment example describe fixture/live setup and current usage; no handoff records were added to README.
+- Strict role, happy-path story and priority response schemas with bounded text, unique identifiers, contiguous happy-path order, five-to-eight story range and allowlisted next actions.
+- Live and deterministic fixture provider support for story generation and priority recommendation. Generated stories must match the current primary role; priority recommendations must reference the active database backlog.
+- Editable/selectable role proposal UI with an explicit primary role and transactional confirmation. Confirmation replaces project roles only after server validation.
+- Selectable ordered story cards with explicit `Lisa kõik`, `Lisa valitud` and regeneration controls. Only selected stories are appended, positions remain contiguous and repeat confirmation is idempotent.
+- Priority recommendation with rationale. Users may accept the suggestion or explicitly choose another current story; ordering and selection change only on confirmation.
+- Project stages advance through stories, priorities and prototype after the corresponding confirmed operations.
+- Pending proposals are project-scoped, type-checked and atomically claimed before mutation. A newer role choice supersedes stale story/priority proposals; applying stories supersedes stale priority proposals.
+- One logical backlog ChangeEvent per confirmed role, story or priority operation. One-level undo now restores roles, stages, story order and selected story as part of the complete snapshot.
+- Conversation proposal identifiers/statuses and current database roles/backlog are returned as scoped DTOs. A small client event keeps the independent backlog panel current after confirmation.
+- README usage and architecture text now describes the confirmed role/story/priority flow.
 
 ## important files
 
-- `src/domain/ai/contracts.ts` — validated response/input contracts and shared conversation DTOs.
-- `src/lib/ai/provider.ts` — server-only live/fixture adapters, configuration and validation/repair pipeline.
-- `src/services/ai-orchestration/service.ts` — scoped context, conversation persistence, pending role proposals and retries.
-- `src/app/api/projects/[projectId]/conversation/route.ts` — bounded validated GET/POST API.
-- `src/components/conversation/conversation.tsx` — guided interaction, conversation history and failure recovery.
-- `src/components/layout/workspace.tsx`, `src/app/projects/[projectId]/page.tsx` — persisted conversation integration.
-- `tests/ai.test.ts` — malformed output, repair bounds, safe errors, mocked live transport, context, scope, proposal-only writes and reconnect/retry tests.
-- `tests/e2e/projects.spec.ts` — fixture interactions plus unavailable AI/manual functionality/restart recovery.
+- `src/domain/ai/contracts.ts` — story/priority envelopes and proposal confirmation commands.
+- `src/lib/ai/provider.ts` — live instructions, fixture stories/priority and database-context domain checks.
+- `src/services/ai-orchestration/service.ts` — fresh role/backlog context and persistent story/priority proposals.
+- `src/services/proposals/workflow.ts` — transactional, scoped and idempotent proposal confirmation.
+- `src/services/stories/service.ts`, `src/services/undo/service.ts` — complete role/stage/backlog snapshots and one-level undo.
+- `src/components/conversation/conversation.tsx` — role editing, story selection and priority decision controls.
+- `src/components/backlog/backlog.tsx` — post-confirmation backlog synchronization without losing manual-operation notices.
+- `tests/ai.test.ts` — validation, no-mutation, selective apply, idempotency, scope, stale proposal, stage and undo coverage.
+- `tests/e2e/projects.spec.ts` — full fixture role → five stories → alternate priority browser flow.
 
 ## database changes
 
-- None. Existing ConversationMessage and Proposal models cover this package.
-- Role proposals use `type: "roles"`, `afterSnapshotJson: { roles: [{ temporaryId, name, rationale }] }` and pending status. Existing pending siblings become superseded when a new valid proposal is saved.
-- Assistant structured payload stores task, validated response, proposalId (for role output) and replyTo. User structured payload stores task, request status and answered question IDs. These are continuity metadata, not authoritative backlog state.
+- None. Existing ProjectRole, Story, Proposal and ChangeEvent models cover this package.
+- Story proposals use `type: "stories"` and persist the validated StoryProposalPayload in `afterSnapshotJson`.
+- Priority proposals use `type: "priority"` and persist `{ storyId, rationale }` in `afterSnapshotJson`.
+- New backlog snapshots include roles plus current/recommended stages. Undo remains tolerant of older snapshots that do not contain those fields.
 
 ## commands run
 
-- Baseline lint, typecheck, 16 tests and production build passed. Initial sandbox browser run failed with local-server EPERM; authorized rerun passed all 4 baseline scenarios.
-- `npm run lint` — passed.
-- `npm run typecheck` — passed.
-- `npm test` — passed: 28 tests across 4 files.
-- `npm run build` — passed before browser validation.
-- `npm run test:e2e` — passed: 6 Chromium scenarios against isolated temporary databases. New coverage includes choices, Other, Skip, multiple selection, literal script-like answer text, roles without backlog mutation, reload, mobile overflow, unavailable AI, retry without duplicated user message, manual backlog, and provider-mode recovery after server restart.
-- The first full service-test rerun exposed a local Prisma schema-engine limitation: it could migrate an existing SQLite file but could not create the temporary file itself. Test setup now creates each empty isolated database before migrations; the full 28-test suite then passed.
-- Desktop and 390px mobile conversation screenshots visually reviewed; controls wrap and automated overflow checks pass.
-- New service test initially used the wrong existing mutation method and omitted required status/size; corrected the test to use the existing manual service contract. No product defect was hidden.
-- Review added explicit malformed-successful-HTTP-envelope repair coverage; final tests include this correction.
-- Actual live provider smoke test was not run: no configured API credentials/model. Mocked transport verifies authorization placement, configured model, strict schema, response extraction and safe HTTP failure behavior.
-- Git writes and local browser server use sandbox approval.
+- Baseline `npm run lint`, `npm run typecheck`, `npm test` (28 tests) and `npm run build` — passed before implementation.
+- `npm run lint` — passed after implementation.
+- `npm run typecheck` — passed after implementation.
+- `npm test` — passed: 32 tests across 4 files.
+- `npm run build` — passed with the final handoff state.
+- Initial sandbox `npm run test:e2e` could not bind `127.0.0.1:3100` (`EPERM`). The approved run then exposed two regressions: backlog remounting removed a notice, and editable role names were no longer visible as text. Both were corrected.
+- Approved `npm run test:e2e` reruns — final run passed all 7 Chromium scenarios, including the new WP-05 flow.
+- Actual live-provider smoke test was not run because no live API credentials/model are configured. Mocked provider transport coverage from WP-04 remains passing; new task validation is covered with fixture and service tests.
 
 ## intermediate commits
 
-- `900b0d5` — validated server AI pipeline, conversation service/API and 11 new security/service tests.
-- Conversation UI, configuration/docs, browser coverage and this handoff are in the subsequent lowercase commit (see git history).
+- `bfda56c` — validated story/priority generation and transactional proposal workflow.
+- Conversation UI, complete undo snapshots, browser coverage, README and this handoff are in the subsequent lowercase commit (see git history).
 
 ## known issues
 
-- Fixture AI is scripted demonstration content; it does not perform live semantic interpretation of arbitrary free text. Live AI receives the latest free text and current task context. Fixture mode is visibly labeled.
-- Role confirmation, editing/selection and primary-role choice belong to WP-05. The current role cards are proposals and cannot mutate roles.
-- Story/prototype/refinement/grooming AI tasks are named in the provider contract but remain unimplemented later packages; routes accept only clarification and role tasks.
-- `recommendedNextStage` remains the existing idea default until WP-09's state-derived recommendation work.
-- A server process terminated while a request is marked processing can leave that turn without a retry action. WP-09 should add interrupted-request recovery/lease expiry and generalized request idempotency. Normal timeout/network/invalid-output failures are persisted as failed and retryable now.
-- Large histories currently render in full; context sent to AI is limited to the latest 12 relevant turns. Pagination/scroll improvements can be part of WP-09.
+- Fixture AI is scripted demonstration content and does not semantically interpret arbitrary story/priority instructions. Live AI receives the latest text and current database context.
+- Undoing a confirmed proposal restores domain state but does not reopen the already-applied Proposal row; generate a fresh proposal to apply again.
+- Prototype, refinement and grooming AI tasks remain for WP-06 through WP-08.
+- A server process terminated while a request is marked processing can leave that turn without a retry action. WP-09 should add interrupted-request recovery/lease expiry and generalized request idempotency.
+- Large conversation histories still render in full; AI context remains bounded to the latest 12 relevant turns.
 - Existing npm audit findings remain: four high-severity development-only Prisma CLI entries (`prisma`, `@prisma/config`, `deepmerge-ts`, `mysql2`). No dependencies changed.
-- Previous WP-03 limitation remains: manual mockup editing uses structured JSON and fixtures, with low-fidelity inert application-owned controls. Undo restores saved story version numbers under the existing convention; later proposal work must guard stale proposals even after undo.
 
 ## decisions or spec deviations
 
-- No contract changes. The role payload shape fills a spec implementation detail and retains role application for WP-05.
-- OpenAI model is explicitly configured rather than hardcoded; incomplete live configuration safely shows unavailable AI. Fixture demonstration requires explicit AI_PROVIDER=fixture.
-- Raw provider output is excluded from repair context; safe validation paths/codes plus original task context are sent for the one repair attempt, preventing untrusted output or credentials from entering error logs/messages.
+- No contract-level deviations. Priority confirmation moves the chosen story to position zero and selects it; choosing a different current story uses the same explicit confirmation path.
+- Role confirmation replaces the current role set because WP-05 presents a complete editable proposal. It also supersedes dependent pending proposals so an old primary-role story map cannot be applied.
+- Proposal confirmations share the one-level backlog undo mechanism by expanding snapshots to roles and stages, preserving the global complete-snapshot invariant.
 
 ## next package starting point
 
-- Agent 5 starts WP-05: role confirmation/editing and primary selection, happy-path story generation, explicit selective confirmation, priority recommendation and stage updates.
-- Reuse task schemas/validated provider pipeline and persisted role proposals; extend the task/action allowlist deliberately. Add a scoped confirmation service rather than interpreting conversation as domain state.
-- Surface a pending proposal identifier in the conversation DTO when adding apply controls; the stored assistant metadata already contains proposalId. Revalidate pending status and edited roles on the server, and create one logical ChangeEvent per confirmed operation.
-- Keep retrying AI requests separate from applying a domain proposal. Completed AI retries currently return existing history without generating duplicates.
-- Build current database context for stories/priority; never infer authoritative story state from chat. Preserve transaction, readiness, ordering, undo and append-only mockup conventions.
-- Read IMPLEMENTATION_SPEC.md in full and start from this passing baseline. Continue build before browser tests, isolated databases, coherent lowercase commits and honest validation records.
+- Agent 6 starts WP-06: prototype AI schema/task, selected-story context, per-criterion accept/edit/reject state, validated wireframe preview and atomic apply.
+- Reuse the proposal identifier/status DTO and atomic claim pattern. Prototype proposals must carry targetStoryId and baseStoryVersion and reject stale versions before mutation.
+- Apply criteria plus one append-only mockup version in one transaction and one logical ChangeEvent. Re-run readiness after apply and keep another story byte-for-byte unchanged.
+- Keep the application-owned safe MockupDocument renderer; never accept HTML, scripts or executable properties.
+- Continue with isolated databases, build before browser tests, coherent lowercase commits and honest validation records.

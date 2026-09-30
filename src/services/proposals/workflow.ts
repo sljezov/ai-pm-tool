@@ -1,14 +1,9 @@
 import "server-only";
-import type { Prisma, PrismaClient } from "@/generated/prisma/client";
+import type { PrismaClient } from "@/generated/prisma/client";
 import { priorityPayloadSchema, proposalCommandSchema, rolePayloadSchema, storyPayloadSchema } from "@/domain/ai/contracts";
 import { projectIdSchema } from "@/lib/validation/projects";
 import { BacklogError } from "@/lib/validation/backlog";
 import { backlogSnapshot, recordBacklogChange } from "@/services/stories/service";
-
-async function recordEvent(tx: Prisma.TransactionClient, projectId: string, eventType: string, entityType: string, entityId: string, before: unknown, after: unknown) {
-  const latest = await tx.changeEvent.findFirst({ where: { projectId }, orderBy: { createdAt: "desc" } });
-  await tx.changeEvent.create({ data: { projectId, eventType, entityType, entityId, beforeSnapshotJson: JSON.stringify(before), afterSnapshotJson: JSON.stringify(after), createdAt: new Date(Math.max(Date.now(), (latest?.createdAt.getTime() ?? 0) + 1)) } });
-}
 
 export function proposalWorkflowService(client: PrismaClient) {
   return {
@@ -28,13 +23,12 @@ export function proposalWorkflowService(client: PrismaClient) {
           if (new Set(command.roles.map(role => role.temporaryId)).size !== command.roles.length || command.roles.some(role => !offered.has(role.temporaryId)) || !command.roles.some(role => role.temporaryId === command.primaryTemporaryId) || new Set(command.roles.map(role => role.name.toLocaleLowerCase())).size !== command.roles.length) throw new BacklogError("Rollide valik või peamine roll on vigane.", 400);
           const claim = await tx.proposal.updateMany({ where: { id: proposal.id, projectId, status: "pending" }, data: { status: "applied", resolvedAt: new Date() } });
           if (!claim.count) return;
-          const before = await tx.projectRole.findMany({ where: { projectId }, orderBy: { position: "asc" } });
+          const before = await backlogSnapshot(tx, projectId);
           await tx.projectRole.deleteMany({ where: { projectId } });
           for (const [position, role] of command.roles.entries()) await tx.projectRole.create({ data: { projectId, name: role.name, isPrimary: role.temporaryId === command.primaryTemporaryId, origin: "ai", position } });
           await tx.proposal.updateMany({ where: { projectId, type: { in: ["stories", "priority"] }, status: "pending" }, data: { status: "superseded", resolvedAt: new Date() } });
           await tx.project.update({ where: { id: projectId }, data: { currentStage: "stories", recommendedNextStage: "stories" } });
-          const after = await tx.projectRole.findMany({ where: { projectId }, orderBy: { position: "asc" } });
-          await recordEvent(tx, projectId, "apply_role_proposal", "roles", proposal.id, before, after);
+          await recordBacklogChange(tx, projectId, "apply_role_proposal", proposal.id, before);
           return;
         }
 

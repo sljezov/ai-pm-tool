@@ -1,5 +1,5 @@
 "use client";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { MockupEditor } from "@/components/mockup/editor";
 import { mockupElementIds } from "@/domain/criteria/validation";
 import { useRouter } from "next/navigation";
@@ -51,6 +51,13 @@ function QuestionForm({ storyId, question, mutate, busy }: { storyId: string; qu
 export function Backlog({ projectId, initial }: { projectId: string; initial: BacklogData }) {
  const router = useRouter(); const [data, setData] = useState(initial); const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [notice, setNotice] = useState("");
  const [issues, setIssues] = useState<ReadinessIssue[]>([]); const [creating, setCreating] = useState(false); const [dragId, setDragId] = useState<string | null>(null);
+ useEffect(() => {
+  async function sync(event: Event) {
+   if (event instanceof CustomEvent && event.detail !== projectId) return;
+   try { const response = await fetch(`/api/projects/${projectId}/backlog`); if (response.ok) setData(await response.json()); } catch { /* Keep the current manual state. */ }
+  }
+  window.addEventListener("backlog-updated", sync); return () => window.removeEventListener("backlog-updated", sync);
+ }, [projectId]);
  const story = data.stories.find(item => item.id === data.selectedStoryId);
  async function mutate(command: Command) {
   if (busy) return false; setBusy(true); setError(""); setIssues([]); setNotice("");

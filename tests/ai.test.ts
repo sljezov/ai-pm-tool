@@ -213,6 +213,20 @@ describe("role, story and priority proposal workflow", () => {
     await workflow.confirm(project.id, { kind: "confirm_priority", proposalId: priorityMessage.proposalId, storyId: chosen.id });
     expect((await client.story.findMany({ where: { projectId: project.id }, orderBy: { position: "asc" } }))[0].id).toBe(chosen.id);
     expect(await client.project.findUniqueOrThrow({ where: { id: project.id } })).toMatchObject({ selectedStoryId: chosen.id, currentStage: "prototype", recommendedNextStage: "prototype" });
+    await storyService(client).mutate(project.id, { type: "undo" });
+    expect((await client.story.findMany({ where: { projectId: project.id }, orderBy: { position: "asc" } })).map(story => story.id)).toEqual(orderBefore);
+    expect(await client.project.findUniqueOrThrow({ where: { id: project.id } })).toMatchObject({ selectedStoryId: null, currentStage: "priorities", recommendedNextStage: "priorities" });
+  });
+
+  it("undo restores roles and stage from one confirmed operation", async () => {
+    const project = await projectService(client).create({ name: "Rollide undo" }); const conversation = conversationService(client, fixture); const workflow = proposalWorkflowService(client);
+    const data = await conversation.submit(project.id, { kind: "text", task: "propose_roles", text: "Paku rollid" });
+    const message = data.messages.find(item => item.task === "propose_roles" && item.response)!;
+    const roles = message.response && "roles" in message.response.payload ? message.response.payload.roles : [];
+    await workflow.confirm(project.id, { kind: "confirm_roles", proposalId: message.proposalId, roles: roles.map(role => ({ temporaryId: role.temporaryId, name: role.name })), primaryTemporaryId: roles[0].temporaryId });
+    await storyService(client).mutate(project.id, { type: "undo" });
+    expect(await client.projectRole.count({ where: { projectId: project.id } })).toBe(0);
+    expect(await client.project.findUniqueOrThrow({ where: { id: project.id } })).toMatchObject({ currentStage: "idea", recommendedNextStage: "idea" });
   });
 
   it("rejects cross-project and superseded confirmations", async () => {

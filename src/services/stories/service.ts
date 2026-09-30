@@ -11,7 +11,8 @@ export const storyInclude = { criteria: { orderBy: { position: "asc" as const } 
 export async function backlogSnapshot(tx: Prisma.TransactionClient, projectId: string) {
   const project = await tx.project.findUnique({ where: { id: projectId } });
   if (!project) throw new BacklogError("Projekti ei leitud.", 404);
-  return { selectedStoryId: project.selectedStoryId, mvpBoundaryAfterStoryId: project.mvpBoundaryAfterStoryId,
+  return { selectedStoryId: project.selectedStoryId, mvpBoundaryAfterStoryId: project.mvpBoundaryAfterStoryId, currentStage: project.currentStage, recommendedNextStage: project.recommendedNextStage,
+    roles: await tx.projectRole.findMany({ where: { projectId }, orderBy: { position: "asc" } }),
     stories: await tx.story.findMany({ where: { projectId }, orderBy: [{ position: "asc" }, { id: "asc" }], include: storyInclude }) };
 }
 export type BacklogSnapshot = Awaited<ReturnType<typeof backlogSnapshot>>;

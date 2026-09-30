@@ -49,7 +49,7 @@ The application is a single local workspace with no authentication. Do not expos
 
 The [implementation specification](docs/IMPLEMENTATION_SPEC.md) describes the complete product, domain rules and intended workflows.
 
-Conversation accepts a project idea and follows up with clarification questions, choices, `Muu (kirjutan ise)` and `Jäta vahele`. Answers and role proposals persist across reloads. AI produces proposals; generating roles does not add them to project data. Role confirmation, story generation and split/merge are planned later workflows.
+Conversation accepts a project idea and follows up with clarification questions, choices, `Muu (kirjutan ise)` and `Jäta vahele`. Answers and proposals persist across reloads. Roles can be edited, selected and assigned one primary role before confirmation. The primary role drives a proposal of five to eight ordered happy-path stories; users can add all or only selected stories. A separate priority proposal recommends one backlog story with a rationale, and the user may accept it or explicitly choose another. Generation never mutates project data: only the confirmation controls apply roles, stories or ordering, and repeated confirmation does not duplicate stories. Prototype and split/merge flows remain later work packages.
 
 The story inspector supports structured mockup fixtures, JSON editing, a safe preview, version history and restore as a new version. Mockups never execute generated HTML, scripts or navigation.
 

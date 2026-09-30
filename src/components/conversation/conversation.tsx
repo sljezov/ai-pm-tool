@@ -1,66 +1,45 @@
 "use client";
 import { useRef, useState } from "react";
-import type { ConversationData, ConversationInput, GuidedTask } from "@/domain/ai/contracts";
+import { useRouter } from "next/navigation";
+import type { ConversationData, ConversationInput, ConversationTask } from "@/domain/ai/contracts";
+
 type Question = { id: string; text: string; selectionMode: "single" | "multiple"; options: { id: string; label: string }[] };
 function QuestionCard({ question, busy, answered, send }: { question: Question; busy: boolean; answered: boolean; send: (answer: { optionIds: string[]; other?: string; skip: boolean }) => void }) {
-  const [selected, setSelected] = useState<string[]>([]);
-  const [other, setOther] = useState(false);
-  const [value, setValue] = useState("");
-  return <fieldset className="clarification-card" disabled={busy || answered}>
-    <legend>{question.text}</legend>
-    {answered && <p className="muted">Vastus salvestatud</p>}
-    <div className="actions">{question.options.map(option => <button key={option.id} type="button" aria-pressed={selected.includes(option.id)} onClick={() => {
-      if (question.selectionMode === "single") send({ optionIds: [option.id], skip: false });
-      else setSelected(values => values.includes(option.id) ? values.filter(id => id !== option.id) : [...values, option.id]);
-    }}>{option.label}</button>)}<button type="button" aria-expanded={other} onClick={() => setOther(!other)}>Muu (kirjutan ise)</button><button type="button" onClick={() => send({ optionIds: [], skip: true })}>Jäta vahele</button></div>
-    {other && <label>Muu vastus<textarea value={value} maxLength={1000} onChange={e => setValue(e.target.value)} /></label>}
-    {(other || question.selectionMode === "multiple") && <button type="button" className="primary-button" disabled={!selected.length && !value.trim()} onClick={() => send({ optionIds: selected, ...(value.trim() ? { other: value.trim() } : {}), skip: false })}>Saada vastus</button>}
-  </fieldset>;
+  const [selected, setSelected] = useState<string[]>([]); const [other, setOther] = useState(false); const [value, setValue] = useState("");
+  return <fieldset className="clarification-card" disabled={busy || answered}><legend>{question.text}</legend>{answered && <p className="muted">Vastus salvestatud</p>}<div className="actions">{question.options.map(option => <button key={option.id} type="button" aria-pressed={selected.includes(option.id)} onClick={() => { if (question.selectionMode === "single") send({ optionIds: [option.id], skip: false }); else setSelected(values => values.includes(option.id) ? values.filter(id => id !== option.id) : [...values, option.id]); }}>{option.label}</button>)}<button type="button" aria-expanded={other} onClick={() => setOther(!other)}>Muu (kirjutan ise)</button><button type="button" onClick={() => send({ optionIds: [], skip: true })}>Jäta vahele</button></div>{other && <label>Muu vastus<textarea value={value} maxLength={1000} onChange={event => setValue(event.target.value)} /></label>}{(other || question.selectionMode === "multiple") && <button type="button" className="primary-button" disabled={!selected.length && !value.trim()} onClick={() => send({ optionIds: selected, ...(value.trim() ? { other: value.trim() } : {}), skip: false })}>Saada vastus</button>}</fieldset>;
 }
+
+type ProposalState = { busy: boolean; apply: (command: unknown) => Promise<void>; generate: (task: ConversationTask, text: string) => void };
+function RoleProposal({ roles, proposalId, status, state }: { roles: Array<{ temporaryId: string; name: string; rationale: string }>; proposalId: string | null; status: string | null; state: ProposalState }) {
+  const [included, setIncluded] = useState(() => roles.map(role => role.temporaryId));
+  const [names, setNames] = useState(() => Object.fromEntries(roles.map(role => [role.temporaryId, role.name])));
+  const [primary, setPrimary] = useState(roles[0]?.temporaryId ?? ""); const pending = status === "pending" && !!proposalId;
+  return <div className="role-proposal"><h4>Rollide ettepanek</h4><p className="muted">Muuda nimesid, vali sobivad rollid ja märgi üks peamiseks.</p>{roles.map(role => <div className="child-card proposal-row" key={role.temporaryId}><strong>{role.name}</strong><label className="proposal-check"><input type="checkbox" checked={included.includes(role.temporaryId)} disabled={!pending || state.busy} onChange={() => setIncluded(values => values.includes(role.temporaryId) ? values.filter(id => id !== role.temporaryId) : [...values, role.temporaryId])} />Kasuta rolli</label><input aria-label={`${role.name} nimi`} value={names[role.temporaryId]} maxLength={300} disabled={!pending || state.busy} onChange={event => setNames(value => ({ ...value, [role.temporaryId]: event.target.value }))} /><label className="proposal-check"><input type="radio" name={`primary-${proposalId}`} checked={primary === role.temporaryId} disabled={!pending || state.busy || !included.includes(role.temporaryId)} onChange={() => setPrimary(role.temporaryId)} />Peamine roll</label><p>{role.rationale}</p></div>)}{pending ? <button className="primary-button" type="button" disabled={state.busy || !included.length || !included.includes(primary) || included.some(id => !names[id]?.trim())} onClick={() => void state.apply({ kind: "confirm_roles", proposalId, roles: included.map(temporaryId => ({ temporaryId, name: names[temporaryId].trim() })), primaryTemporaryId: primary })}>Kinnita rollid</button> : status === "applied" ? <div className="actions"><span className="success-note">Rollid kinnitatud</span><button type="button" onClick={() => state.generate("propose_stories", "Koosta peamise rolli happy-path kasutajalood.")}>Genereeri happy-path lood</button></div> : <p className="muted">See ettepanek pole enam aktiivne.</p>}</div>;
+}
+
+function StoryProposal({ payload, proposalId, status, state }: { payload: { primaryRole: string; stories: Array<{ temporaryId: string; role: string; action: string; benefit: string; rationale?: string; happyPathOrder: number; selectedByDefault: boolean }> }; proposalId: string | null; status: string | null; state: ProposalState }) {
+  const ordered = [...payload.stories].sort((a, b) => a.happyPathOrder - b.happyPathOrder);
+  const [selected, setSelected] = useState(() => ordered.filter(story => story.selectedByDefault).map(story => story.temporaryId)); const pending = status === "pending" && !!proposalId;
+  const apply = (ids: string[]) => state.apply({ kind: "confirm_stories", proposalId, selectedTemporaryIds: ids });
+  return <div className="story-proposal"><h4>{payload.primaryRole} · happy path</h4><p className="muted">Vali backlogi lisatavad lood. Enne kinnitamist midagi ei muudeta.</p>{ordered.map(story => <label className="child-card selectable-story" key={story.temporaryId}><input type="checkbox" checked={selected.includes(story.temporaryId)} disabled={!pending || state.busy} onChange={() => setSelected(values => values.includes(story.temporaryId) ? values.filter(id => id !== story.temporaryId) : [...values, story.temporaryId])} /><span><strong>{story.happyPathOrder}. {story.role}na soovin {story.action}, et {story.benefit}.</strong>{story.rationale && <small>{story.rationale}</small>}</span></label>)}{pending ? <div className="actions"><button type="button" disabled={state.busy} onClick={() => void apply(ordered.map(story => story.temporaryId))}>Lisa kõik</button><button className="primary-button" type="button" disabled={state.busy || !selected.length} onClick={() => void apply(selected)}>Lisa valitud ({selected.length})</button><button type="button" disabled={state.busy} onClick={() => state.generate("propose_stories", "Genereeri happy-path lood uuesti.")}>Genereeri uuesti</button></div> : status === "applied" ? <div className="actions"><span className="success-note">Valitud lood lisatud</span><button type="button" onClick={() => state.generate("recommend_priority", "Soovita backlogist kõige olulisem lugu.")}>Küsi prioriteedisoovitus</button></div> : <p className="muted">See ettepanek pole enam aktiivne.</p>}</div>;
+}
+
+function PriorityProposal({ payload, proposalId, status, stories, state }: { payload: { storyId: string; rationale: string }; proposalId: string | null; status: string | null; stories: ConversationData["stories"]; state: ProposalState }) {
+  const [selected, setSelected] = useState(payload.storyId); const pending = status === "pending" && !!proposalId; const recommended = stories.find(story => story.id === payload.storyId);
+  return <div className="priority-proposal"><h4>Prioriteedisoovitus</h4><p><strong>{recommended ? `${recommended.role}na soovin ${recommended.action}, et ${recommended.benefit}.` : "Soovitatud lugu"}</strong></p><p>{payload.rationale}</p>{pending ? <><label>Vali esimeseks lugu<select value={selected} disabled={state.busy} onChange={event => setSelected(event.target.value)}>{stories.map(story => <option value={story.id} key={story.id}>{story.role} · {story.action}</option>)}</select></label><div className="actions"><button className="primary-button" type="button" disabled={state.busy || !selected} onClick={() => void state.apply({ kind: "confirm_priority", proposalId, storyId: selected })}>{selected === payload.storyId ? "Nõustu soovitusega" : "Vali teine lugu"}</button></div></> : status === "applied" ? <p className="success-note">Prioriteet kinnitatud ja lugu valitud.</p> : <p className="muted">See ettepanek pole enam aktiivne.</p>}</div>;
+}
+
 export function Conversation({ projectId, initial }: { projectId: string; initial: ConversationData }) {
-  const [data, setData] = useState(initial);
-  const [text, setText] = useState("");
-  const [busy, setBusy] = useState(false);
-  const submitting = useRef(false);
-  const [error, setError] = useState("");
-  const inputRef = useRef<HTMLTextAreaElement>(null);
-  const latest = [...data.messages].reverse().find(message => message.response);
-  const answeredIds = data.messages.flatMap(message => message.answeredQuestionIds);
-  async function send(input: ConversationInput) {
-    if (submitting.current) return;
-    submitting.current = true; setBusy(true); setError("");
-    try {
-      const response = await fetch(`/api/projects/${projectId}/conversation`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error);
-      setData(result);
-      if (input.kind === "text") setText("");
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Päring ebaõnnestus. Proovi uuesti.");
-      // Recover persisted failed or completed turns after a lost HTTP response.
-      try { const response = await fetch(`/api/projects/${projectId}/conversation`); if (response.ok) setData(await response.json()); } catch { /* Keep the draft and manual controls. */ }
-    } finally { submitting.current = false; setBusy(false); }
+  const router = useRouter(); const [data, setData] = useState(initial); const [text, setText] = useState(""); const [busy, setBusy] = useState(false); const submitting = useRef(false); const [error, setError] = useState(""); const inputRef = useRef<HTMLTextAreaElement>(null);
+  const latest = [...data.messages].reverse().find(message => message.response); const answeredIds = data.messages.flatMap(message => message.answeredQuestionIds);
+  async function request(method: "POST" | "PATCH", input: unknown) {
+    if (submitting.current) return; submitting.current = true; setBusy(true); setError("");
+    try { const response = await fetch(`/api/projects/${projectId}/conversation`, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) }); const result = await response.json(); if (!response.ok) throw new Error(result.error); setData(result); if (method === "PATCH") window.dispatchEvent(new CustomEvent("backlog-updated", { detail: projectId })); router.refresh(); if (method === "POST" && (input as ConversationInput).kind === "text") setText(""); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : "Päring ebaõnnestus. Proovi uuesti."); try { const response = await fetch(`/api/projects/${projectId}/conversation`); if (response.ok) setData(await response.json()); } catch { /* Manual controls remain available. */ } }
+    finally { submitting.current = false; setBusy(false); }
   }
-  function action(task: string) {
-    if (task === "write_text") { inputRef.current?.focus(); return; }
-    void send({ kind: "text", task: task as GuidedTask, text: text.trim() || (task === "propose_roles" ? "Paku kasutajarolle viimaste täpsustuste põhjal." : "Täpsustame projekti ideed.") });
-  }
-  return <section className="conversation" aria-label="Projekti vestlus">
-    <div className="conversation-heading"><h3>Vestlus</h3><span className="stage-badge">{data.mode === "fixture" ? "Näidis-AI · fixture" : data.mode === "live" ? "AI ühendatud" : "AI pole seadistatud"}</span></div>
-    {data.mode === "unavailable" && <p className="muted">Saad sõnumeid salvestada ja backlogi käsitsi hallata. AI ühenduse puudumisel saad vastust hiljem uuesti proovida.</p>}
-    {!data.messages.length && <p className="muted">Kirjelda ühe lausega oma ideed. Aitan küsimuste ja valikutega seda täpsustada.</p>}
-    <div className="conversation-history" aria-label="Vestluse ajalugu">{data.messages.map(message => <article key={message.id} className={`conversation-message message-${message.role}`}>
-      <span className="eyebrow">{message.role === "user" ? "SINA" : message.role === "assistant" ? "AI ETTEPANEK" : "TEADE"}</span><p>{message.content}</p>
-      {message.response && "questions" in message.response.payload && message.response.payload.questions.map(question => <QuestionCard key={question.id} question={question} busy={busy} answered={answeredIds.includes(question.id) || latest?.id !== message.id} send={answer => void send({ kind: "answer", messageId: message.id, questionId: question.id, ...answer })} />)}
-      {message.response && "roles" in message.response.payload && <div className="role-proposal"><h4>Rollide ettepanek</h4><p className="muted">Vaata soovitatud rollid üle või täpsusta neid vestluses. Rollid pole veel projekti lisatud.</p>{message.response.payload.roles.map(role => <div className="child-card" key={role.temporaryId}><strong>{role.name}</strong><p>{role.rationale}</p></div>)}</div>}
-      {message.response && latest?.id === message.id && <div className="actions" aria-label="Järgmised tegevused">{message.response.nextActions.map(next => <button key={next.id} type="button" disabled={busy} onClick={() => action(next.action)}>{next.label}</button>)}</div>}
-      {message.role === "user" && message.requestStatus === "failed" && <button className="text-button" disabled={busy} onClick={() => void send({ kind: "retry", messageId: message.id })}>Proovi vastust uuesti</button>}
-    </article>)}</div>
-    {error && <p className="error" role="alert">{error}</p>}
-    {busy && <p role="status">AI koostab vastust…</p>}
-    <form onSubmit={event => { event.preventDefault(); if (text.trim()) void send({ kind: "text", text }); }}>
-      <label htmlFor="conversation-text">Sinu idee või täpsustus</label><textarea ref={inputRef} id="conversation-text" value={text} maxLength={4000} rows={3} disabled={busy} onChange={event => setText(event.target.value)} placeholder="Soovin spordiklubile rakendust…" />
-      <button className="primary-button" disabled={busy || !text.trim()}>{busy ? "Saadan…" : "Saada sõnum"}</button>
-    </form>
-  </section>;
+  const send = (input: ConversationInput) => request("POST", input);
+  function action(task: string) { if (task === "write_text") { inputRef.current?.focus(); return; } void send({ kind: "text", task: task as ConversationTask, text: text.trim() || (task === "propose_roles" ? "Paku kasutajarolle viimaste täpsustuste põhjal." : task === "propose_stories" ? "Koosta peamise rolli happy-path kasutajalood." : task === "recommend_priority" ? "Soovita backlogist kõige olulisem lugu." : "Täpsustame projekti ideed.") }); }
+  const proposalState: ProposalState = { busy, apply: command => request("PATCH", command), generate: (task, value) => { void send({ kind: "text", task, text: value }); } };
+  return <section className="conversation" aria-label="Projekti vestlus"><div className="conversation-heading"><h3>Vestlus</h3><span className="stage-badge">{data.mode === "fixture" ? "Näidis-AI · fixture" : data.mode === "live" ? "AI ühendatud" : "AI pole seadistatud"}</span></div>{data.mode === "unavailable" && <p className="muted">Saad sõnumeid salvestada ja backlogi käsitsi hallata. AI ühenduse puudumisel saad vastust hiljem uuesti proovida.</p>}{!data.messages.length && <p className="muted">Kirjelda ühe lausega oma ideed. Aitan küsimuste ja valikutega seda täpsustada.</p>}<div className="conversation-history" aria-label="Vestluse ajalugu">{data.messages.map(message => <article key={message.id} className={`conversation-message message-${message.role}`}><span className="eyebrow">{message.role === "user" ? "SINA" : message.role === "assistant" ? "AI ETTEPANEK" : "TEADE"}</span><p>{message.content}</p>{message.response && "questions" in message.response.payload && message.response.payload.questions.map(question => <QuestionCard key={question.id} question={question} busy={busy} answered={answeredIds.includes(question.id) || latest?.id !== message.id} send={answer => void send({ kind: "answer", messageId: message.id, questionId: question.id, ...answer })} />)}{message.response && "roles" in message.response.payload && <RoleProposal roles={message.response.payload.roles} proposalId={message.proposalId} status={message.proposalStatus} state={proposalState} />}{message.response && "stories" in message.response.payload && <StoryProposal payload={message.response.payload} proposalId={message.proposalId} status={message.proposalStatus} state={proposalState} />}{message.response && "storyId" in message.response.payload && <PriorityProposal payload={message.response.payload} proposalId={message.proposalId} status={message.proposalStatus} stories={data.stories} state={proposalState} />}{message.response && latest?.id === message.id && message.proposalStatus === "pending" && <div className="actions" aria-label="Järgmised tegevused">{message.response.nextActions.map(next => <button key={next.id} type="button" disabled={busy} onClick={() => action(next.action)}>{next.label}</button>)}</div>}{message.role === "user" && message.requestStatus === "failed" && <button className="text-button" disabled={busy} onClick={() => void send({ kind: "retry", messageId: message.id })}>Proovi vastust uuesti</button>}</article>)}</div>{error && <p className="error" role="alert">{error}</p>}{busy && <p role="status">AI koostab või rakendab ettepanekut…</p>}<form onSubmit={event => { event.preventDefault(); if (text.trim()) void send({ kind: "text", text }); }}><label htmlFor="conversation-text">Sinu idee või täpsustus</label><textarea ref={inputRef} id="conversation-text" value={text} maxLength={4000} rows={3} disabled={busy} onChange={event => setText(event.target.value)} placeholder="Soovin spordiklubile rakendust…" /><button className="primary-button" disabled={busy || !text.trim()}>{busy ? "Saadan…" : "Saada sõnum"}</button></form></section>;
 }

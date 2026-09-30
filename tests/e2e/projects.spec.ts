@@ -213,6 +213,35 @@ test("guided fixture conversation choices, Other, Skip, multi-selection and role
   }
 });
 
+test("confirm roles, select happy-path stories and explicitly choose priority", async ({ page, request }, testInfo) => {
+  const project = await (await request.post("/api/projects", { data: { name: "WP05 spordiklubi", description: "Liikmed leiavad ja broneerivad treeninguid" } })).json();
+  expect((await request.post(`/api/projects/${project.id}/conversation`, { data: { kind: "text", task: "propose_roles", text: "Paku rollid" } })).ok()).toBe(true);
+  await page.goto(`/projects/${project.id}`);
+  await page.getByLabel("Liige nimi").fill("Klubi liige");
+  await page.getByRole("button", { name: "Kinnita rollid" }).click();
+  await expect(page.getByText("Rollid kinnitatud", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Genereeri happy-path lood" }).click();
+  const proposal = page.locator(".story-proposal").last();
+  await expect(proposal.locator(".selectable-story")).toHaveCount(6);
+  await proposal.locator(".selectable-story").last().getByRole("checkbox").uncheck();
+  await proposal.getByRole("button", { name: "Lisa valitud (5)" }).click();
+  await expect(page.locator("#panel-backlog .story-card")).toHaveCount(5);
+  await proposal.getByRole("button", { name: "Küsi prioriteedisoovitus" }).click();
+  const priority = page.locator(".priority-proposal").last();
+  await expect(priority.getByRole("heading", { name: "Prioriteedisoovitus" })).toBeVisible();
+  const select = priority.getByLabel("Vali esimeseks lugu");
+  const options = select.locator("option");
+  const alternative = await options.last().getAttribute("value");
+  await select.selectOption(alternative!);
+  await priority.getByRole("button", { name: "Vali teine lugu" }).click();
+  await expect(page.getByText("Prioriteet kinnitatud ja lugu valitud.")).toBeVisible();
+  const backlog = await (await request.get(`/api/projects/${project.id}/backlog`)).json();
+  expect(backlog.stories[0].id).toBe(alternative);
+  expect(backlog.selectedStoryId).toBe(alternative);
+  expect((await (await request.get(`/api/projects/${project.id}`)).json()).currentStage).toBe("prototype");
+  await page.screenshot({ path: testInfo.outputPath("story-priority-flow.png"), fullPage: true });
+});
+
 test("unavailable AI saves messages, safe retry and manual backlog remain usable", async ({ page, request }) => {
   await stopServer(); aiProvider = "unavailable"; await startServer();
   try {

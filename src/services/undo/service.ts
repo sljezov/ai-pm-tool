@@ -19,5 +19,9 @@ export async function restoreBacklogSnapshot(tx: Prisma.TransactionClient, proje
     await tx.openQuestion.deleteMany({ where: { storyId: story.id } });
     for (const item of openQuestions) await tx.openQuestion.create({ data: { ...item, createdAt: new Date(item.createdAt), resolvedAt: item.resolvedAt ? new Date(item.resolvedAt) : null } });
   }
-  await tx.project.update({ where: { id: projectId }, data: { selectedStoryId: snapshot.selectedStoryId, mvpBoundaryAfterStoryId: snapshot.mvpBoundaryAfterStoryId } });
+  if (Array.isArray(snapshot.roles)) {
+    await tx.projectRole.deleteMany({ where: { projectId } });
+    for (const role of snapshot.roles) await tx.projectRole.create({ data: { ...role, projectId } });
+  }
+  await tx.project.update({ where: { id: projectId }, data: { selectedStoryId: snapshot.selectedStoryId, mvpBoundaryAfterStoryId: snapshot.mvpBoundaryAfterStoryId, ...(snapshot.currentStage ? { currentStage: snapshot.currentStage } : {}), ...(snapshot.recommendedNextStage ? { recommendedNextStage: snapshot.recommendedNextStage } : {}) } });
 }
