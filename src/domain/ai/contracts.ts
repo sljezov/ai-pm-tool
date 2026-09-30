@@ -10,10 +10,10 @@ const question = z.strictObject({ id, text, selectionMode: z.enum(["single", "mu
   if (new Set(value.options.map(item => item.id)).size !== value.options.length) ctx.addIssue({ code: "custom", message: "Option IDs must be unique" });
 });
 
-export const conversationTaskSchema = z.enum(["clarify_idea", "propose_roles", "propose_stories", "recommend_priority", "propose_prototype"]);
+export const conversationTaskSchema = z.enum(["clarify_idea", "propose_roles", "propose_stories", "recommend_priority", "propose_prototype", "propose_refinement"]);
 export type ConversationTask = z.infer<typeof conversationTaskSchema>;
 export type GuidedTask = ConversationTask;
-const actionName = z.enum(["clarify_idea", "propose_roles", "propose_stories", "recommend_priority", "propose_prototype", "write_text"]);
+const actionName = z.enum(["clarify_idea", "propose_roles", "propose_stories", "recommend_priority", "propose_prototype", "propose_refinement", "write_text"]);
 const actions = z.array(z.strictObject({ id, label: text, action: actionName })).min(1).max(4);
 const envelope = { message: text, nextActions: actions };
 
@@ -36,6 +36,21 @@ export const prototypePayloadSchema = z.strictObject({
 });
 export type PrototypePayload = z.infer<typeof prototypePayloadSchema>;
 
+const storyWordingSchema = z.strictObject({ role: shortText, action: shortText, benefit: shortText });
+const refinementCriterionSchema = z.strictObject({ text, mockupElementIds: z.array(z.string().min(1).max(100)).max(200) });
+export const refinementPayloadSchema = z.strictObject({
+  targetStoryId: z.string().min(1).max(100), baseStoryVersion: z.number().int().min(1),
+  story: z.strictObject({ before: storyWordingSchema, after: storyWordingSchema }).optional(),
+  criteria: z.strictObject({ before: z.array(refinementCriterionSchema).max(20), after: z.array(refinementCriterionSchema).min(1).max(20) }).optional(),
+  mockup: z.strictObject({ before: mockupDocumentSchema.nullable(), after: mockupDocumentSchema }).optional(),
+  crossStorySuggestions: z.array(z.strictObject({ targetStoryId: z.string().min(1).max(100), suggestion: text })).max(8),
+}).superRefine((value, ctx) => {
+  if (!value.story && !value.criteria && !value.mockup) ctx.addIssue({ code: "custom", message: "At least one changed area is required" });
+  for (const area of [value.story, value.criteria, value.mockup]) if (area && JSON.stringify(area.before) === JSON.stringify(area.after)) ctx.addIssue({ code: "custom", message: "Changed areas must differ" });
+});
+export type RefinementPayload = z.infer<typeof refinementPayloadSchema>;
+export const refinementProposalSchema = z.strictObject({ ...envelope, payload: refinementPayloadSchema });
+
 export const clarificationSchema = z.strictObject({ ...envelope, payload: clarificationPayloadSchema }).superRefine((value, ctx) => {
   if (new Set(value.payload.questions.map(item => item.id)).size !== value.payload.questions.length) ctx.addIssue({ code: "custom", message: "Question IDs must be unique" });
 });
@@ -52,7 +67,7 @@ export const storyProposalSchema = z.strictObject({ ...envelope, payload: storyP
 export const priorityRecommendationSchema = z.strictObject({ ...envelope, payload: priorityPayloadSchema });
 export const prototypeProposalSchema = z.strictObject({ ...envelope, payload: prototypePayloadSchema });
 
-export const taskSchemas = { clarify_idea: clarificationSchema, propose_roles: roleProposalSchema, propose_stories: storyProposalSchema, recommend_priority: priorityRecommendationSchema, propose_prototype: prototypeProposalSchema };
+export const taskSchemas = { clarify_idea: clarificationSchema, propose_roles: roleProposalSchema, propose_stories: storyProposalSchema, recommend_priority: priorityRecommendationSchema, propose_prototype: prototypeProposalSchema, propose_refinement: refinementProposalSchema };
 export type ConversationResponse = z.infer<(typeof taskSchemas)[keyof typeof taskSchemas]>;
 export type GuidedResponse = ConversationResponse;
 export type AiTask = ConversationTask | "propose_prototype" | "propose_refinement" | "review_backlog";
@@ -69,6 +84,8 @@ export const proposalCommandSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("confirm_stories"), proposalId: z.string().min(1).max(100), selectedTemporaryIds: z.array(id).min(1).max(8) }),
   z.strictObject({ kind: z.literal("confirm_priority"), proposalId: z.string().min(1).max(100), storyId: z.string().min(1).max(100) }),
   z.strictObject({ kind: z.literal("confirm_prototype"), proposalId: z.string().min(1).max(100), acceptProposedStory: z.boolean(), criteria: z.array(z.strictObject({ temporaryId: id, text, mockupElementIds: z.array(z.string().min(1).max(100)).max(200) })).min(1).max(20) }),
+  z.strictObject({ kind: z.literal("confirm_refinement"), proposalId: z.string().min(1).max(100), edits: z.strictObject({ story: storyWordingSchema.optional(), criteria: z.array(refinementCriterionSchema).min(1).max(20).optional(), mockup: mockupDocumentSchema.optional() }) }),
+  z.strictObject({ kind: z.literal("reject_refinement"), proposalId: z.string().min(1).max(100) }),
   z.strictObject({ kind: z.literal("reject_prototype"), proposalId: z.string().min(1).max(100) }),
 ]);
 

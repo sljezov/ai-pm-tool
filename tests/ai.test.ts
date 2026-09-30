@@ -260,7 +260,7 @@ describe("role, story and priority proposal workflow", () => {
     } };
     const data = await conversationService(client, provider).submit(project.id, { kind: "text", task: "propose_prototype", text: "Täpsusta prototüüpi" });
     const next = data.messages.filter(item => item.task === "propose_prototype" && item.response).at(-1)!;
-    const proposal = next.response && "targetStoryId" in next.response.payload ? next.response.payload : payload;
+    const proposal = next.response && "targetStoryId" in next.response.payload && !("crossStorySuggestions" in next.response.payload) ? next.response.payload : payload;
     expect(requests[0]).toMatchObject({ context: { selectedStory: { criteria: expect.arrayContaining([{ text: payload.criteria[0].text, mockupElementIds: payload.criteria[0].mockupElementIds }]), mockup: payload.mockup } } });
     const before = await stories.get(project.id);
     const oldMockup = before.stories[0].mockupVersions[0];
@@ -270,6 +270,89 @@ describe("role, story and priority proposal workflow", () => {
     expect(changed.readiness.ready).toBe(false);
     expect(changed.mockupVersions[1]).toEqual(oldMockup);
     expect(changed.mockupVersions[0]).toMatchObject({ version: 2, source: "ai" });
+  });
+
+  async function refinementSetup() {
+    const setup = await prototypeSetup();
+    await proposalWorkflowService(client).confirm(setup.project.id, { kind: "confirm_prototype", proposalId: setup.message.proposalId, acceptProposedStory: false, criteria: setup.payload.criteria.slice(0, 3) });
+    const before = await setup.stories.get(setup.project.id);
+    const requests: AiRequest[] = [];
+    const recorder: AiProvider = { async generateStructured<T>(request: AiRequest) { requests.push(request); return fixture.generateStructured<T>(request); } };
+    const data = await conversationService(client, recorder).submit(setup.project.id, { kind: "text", text: "Kliendi täpsustus: hind peab sisaldama käibemaksu 24%." });
+    const message = data.messages.filter(item => item.task === "propose_refinement" && item.response).at(-1)!;
+    expect(message).toBeDefined();
+    const payload = message.response && "crossStorySuggestions" in message.response.payload ? message.response.payload : null;
+    if (!payload) throw new Error("Missing refinement");
+    return { ...setup, before, message, payload, requests };
+  }
+
+  it("refinement previews are isolated; edited apply is atomic, idempotent and completely undoable", async () => {
+    const { project, stories, target, before, message, payload, requests } = await refinementSetup();
+    expect(await stories.get(project.id)).toEqual(before);
+    expect(requests[0]).toMatchObject({ task: "propose_refinement", context: { selectedStory: { id: target.id, version: before.stories[0].version, mockup: payload.mockup!.before }, boundaries: { mutableFields: ["role", "action", "benefit", "criteria", "mockup"] } } });
+    const suggestions = await client.proposal.findMany({ where: { projectId: project.id, type: "cross_story_suggestion" } });
+    expect(suggestions).toHaveLength(1);
+    expect(suggestions[0]).toMatchObject({ status: "pending", targetStoryId: before.stories[1].id });
+    const events = await client.changeEvent.count({ where: { projectId: project.id } });
+    const command = { kind: "confirm_refinement", proposalId: message.proposalId, edits: { story: { ...payload.story!.after, benefit: "näen lõplikku hinda" }, criteria: payload.criteria!.after } };
+    await proposalWorkflowService(client).confirm(project.id, command);
+    await proposalWorkflowService(client).confirm(project.id, command);
+    const applied = await stories.get(project.id);
+    expect(applied.stories[1]).toEqual(before.stories[1]);
+    expect(applied.stories[0]).toMatchObject({ benefit: "näen lõplikku hinda", version: before.stories[0].version + 1 });
+    expect(applied.stories[0].criteria).toHaveLength(4);
+    expect(applied.stories[0].mockupVersions[0]).toMatchObject({ source: "refinement", version: 2 });
+    expect(applied.stories[0].mockupVersions[1]).toEqual(before.stories[0].mockupVersions[0]);
+    expect(await client.changeEvent.count({ where: { projectId: project.id } })).toBe(events + 1);
+    expect(await client.proposal.findUnique({ where: { id: suggestions[0].id } })).toEqual(suggestions[0]);
+    await stories.mutate(project.id, { type: "undo" });
+    const undone = await stories.get(project.id);
+    expect(undone.stories[1]).toEqual(before.stories[1]);
+    expect(undone.stories[0].criteria).toEqual(before.stories[0].criteria);
+    expect(undone.stories[0]).toMatchObject({ role: before.stories[0].role, action: before.stories[0].action, benefit: before.stories[0].benefit, version: before.stories[0].version });
+    expect(undone.stories[0].mockupVersions[0].structureJson).toBe(before.stories[0].mockupVersions[0].structureJson);
+    expect(undone.stories[0].mockupVersions).toHaveLength(3);
+  });
+
+  it("refinement rejects stale, cross-story fields, bad mappings, tampered before values and foreign projects", async () => {
+    const { project, stories, before, message, payload } = await refinementSetup();
+    const workflow = proposalWorkflowService(client);
+    const command = { kind: "confirm_refinement", proposalId: message.proposalId, edits: {} };
+    await expect(workflow.confirm(project.id, { ...command, targetStoryId: before.stories[1].id })).rejects.toThrow();
+    await expect(workflow.confirm(project.id, { ...command, edits: { story: { ...payload.story!.after, position: 99 } } })).rejects.toThrow();
+    await expect(workflow.confirm(project.id, { ...command, edits: { criteria: [{ text: "Ekraan kuvab hinna.", mockupElementIds: ["foreign-element"] }] } })).rejects.toMatchObject({ status: 422 });
+    const other = await projectService(client).create({ name: "Foreign" });
+    await expect(workflow.confirm(other.id, command)).rejects.toMatchObject({ status: 404 });
+    await client.proposal.update({ where: { id: message.proposalId! }, data: { afterSnapshotJson: JSON.stringify({ ...payload, story: { ...payload.story, before: { ...payload.story!.before, role: "Tampered" } } }) } });
+    await expect(workflow.confirm(project.id, command)).rejects.toMatchObject({ status: 422 });
+    expect(await stories.get(project.id)).toEqual(before);
+    await client.proposal.update({ where: { id: message.proposalId! }, data: { afterSnapshotJson: JSON.stringify(payload) } });
+    await stories.mutate(project.id, { type: "create_question", storyId: before.stories[0].id, text: "Kas hind võib muutuda?" });
+    const stale = await stories.get(project.id);
+    await expect(workflow.confirm(project.id, command)).rejects.toMatchObject({ status: 409 });
+    expect(await stories.get(project.id)).toEqual(stale);
+    await workflow.confirm(project.id, { kind: "reject_refinement", proposalId: message.proposalId });
+    expect(await stories.get(project.id)).toEqual(stale);
+  });
+
+  it("invalid AI refinement before-values, scope and executable trees are repaired once, never displayed", async () => {
+    const { project, before, requests, payload } = await refinementSetup();
+    for (const changed of [
+      { ...payload, targetStoryId: before.stories[1].id },
+      { ...payload, criteria: { ...payload.criteria, before: [] } },
+      { ...payload, mockup: { ...payload.mockup, after: { schemaVersion: 1, screenName: "Unsafe", elements: [{ id: "script", type: "script" }] } } },
+      { ...payload, crossStorySuggestions: [{ targetStoryId: "foreign", suggestion: "Change another project" }] },
+      { ...payload, story: { ...payload.story, after: { ...payload.story!.after, status: "ready_for_development" } } },
+    ]) {
+      const spy = vi.fn(async () => ({ message: "Täpsustus", payload: changed, nextActions: [{ id: "retry", label: "Uuesti", action: "propose_refinement" }] }));
+      await expect(generateValidated({ generateStructured: spy as AiProvider["generateStructured"] }, "propose_refinement", requests[0].context)).rejects.toBeInstanceOf(AiInvalidOutputError);
+      expect(spy).toHaveBeenCalledTimes(2);
+    }
+    const bad = conversationService(client, { async generateStructured<T>() { return { message: "Broken" } as T; } });
+    const count = await client.proposal.count({ where: { projectId: project.id } });
+    const data = await bad.submit(project.id, { kind: "text", task: "propose_refinement", text: "Bad output" });
+    expect(data.messages.at(-1)?.messageType).toBe("ai_error");
+    expect(await client.proposal.count({ where: { projectId: project.id } })).toBe(count);
   });
 
   it("validates bounded happy-path and scoped priority response contracts", async () => {
