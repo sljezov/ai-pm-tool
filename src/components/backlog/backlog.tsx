@@ -11,6 +11,7 @@ type Story = BacklogData["stories"][number];
 type Command = Record<string, unknown>;
 type Mutate = (command: Command) => Promise<boolean>;
 const statusLabels = { idea: "Idee", needs_clarification: "Vajab täpsustamist", reviewed: "Läbivaadatud", ready_for_development: "Valmis arenduseks" };
+const statusOrder = Object.keys(statusLabels) as (keyof typeof statusLabels)[];
 
 function StoryForm({ story, mutate, busy, close }: { story?: Story; mutate: Mutate; busy: boolean; close?: () => void }) {
  async function submit(event: FormEvent<HTMLFormElement>) {
@@ -61,6 +62,12 @@ export function Backlog({ projectId, initial }: { projectId: string; initial: Ba
   window.addEventListener("backlog-updated", sync); return () => window.removeEventListener("backlog-updated", sync);
  }, [projectId]);
  const story = data.stories.find(item => item.id === data.selectedStoryId);
+ useEffect(() => {
+  if (!story) return;
+  function onKey(event: KeyboardEvent) { if (event.key === "Escape") void mutate({ type: "select", storyId: null }); }
+  window.addEventListener("keydown", onKey); return () => window.removeEventListener("keydown", onKey);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+ }, [story?.id]);
  async function mutate(command: Command) {
   if (submitting.current) return false; submitting.current = true; setBusy(true); setError(""); setIssues([]); setNotice("");
   try {
@@ -73,11 +80,21 @@ export function Backlog({ projectId, initial }: { projectId: string; initial: Ba
   } catch (cause) { setError(cause instanceof Error ? cause.message : "Salvestamine ebaõnnestus."); return false; }
   finally { submitting.current = false; setBusy(false); }
  }
- function move(id: string, destination: number) {
-  const ids = data.stories.map(item => item.id); const position = ids.indexOf(id); if (position < 0 || destination < 0 || destination >= ids.length || destination === position) return;
-  ids.splice(position, 1); ids.splice(destination, 0, id); void mutate({ type: "reorder", storyIds: ids });
+ function changeStatus(item: Story, status: Story["status"]) {
+  if (item.status === status || busy) return;
+  void mutate({ type: "update_story", storyId: item.id, role: item.role, action: item.action, benefit: item.benefit, status, size: item.size, requiresMockup: item.requiresMockup });
+ }
+ function moveWithinColumn(id: string, status: Story["status"], destination: number) {
+  const column = data.stories.filter(item => item.status === status);
+  const position = column.findIndex(item => item.id === id);
+  if (position < 0 || destination < 0 || destination >= column.length || destination === position) return;
+  const reordered = [...column]; const [moved] = reordered.splice(position, 1); reordered.splice(destination, 0, moved);
+  const slots = data.stories.map((item, i) => (item.status === status ? i : -1)).filter(i => i >= 0);
+  const ids = data.stories.map(item => item.id); reordered.forEach((item, i) => { ids[slots[i]] = item.id; });
+  void mutate({ type: "reorder", storyIds: ids });
  }
  const areaId = (area: ReadinessIssue["area"]) => `story-${area}`;
+ const columns = statusOrder.map(status => ({ status, items: data.stories.filter(item => item.status === status) }));
  return <div className="manual-backlog" aria-busy={busy}>
   <div className="backlog-heading"><h2>Backlog</h2><span className="count-badge">{data.stories.length}</span></div>
   <div className="actions"><button disabled={busy} onClick={() => { setCreating(!creating); setError(""); setIssues([]); }}>Uus lugu</button><button disabled={busy || !data.canUndo} onClick={() => mutate({ type: "undo" })}>Võta tagasi</button></div>
@@ -86,16 +103,26 @@ export function Backlog({ projectId, initial }: { projectId: string; initial: Ba
   {error && <div role="alert" className="error"><p>{error}</p>{issues.length > 0 && <ul>{issues.map((issue, i) => <li key={i}><a href={`#${areaId(issue.area)}`}>{issue.message}</a></li>)}</ul>}</div>}
   {creating && <section className="story-create"><h3>Uus kasutajalugu</h3><StoryForm mutate={mutate} busy={busy} close={() => setCreating(false)} /></section>}
   {!data.stories.length && <div className="backlog-empty"><h3>Lugude jaoks on ruumi.</h3><p>Lisa esimene kasutajalugu käsitsi. AI võtit pole vaja.</p></div>}
-  <ol className="story-list">{data.stories.map((item, index) => <li key={item.id}>
-   <article className={`story-card ${item.id === story?.id ? "selected" : ""}`} draggable={!busy} onDragStart={event => { setDragId(item.id); event.dataTransfer.setData("text/plain", item.id); event.dataTransfer.effectAllowed = "move"; }} onDragEnd={() => setDragId(null)} onDragOver={event => { if (dragId) event.preventDefault(); }} onDrop={event => { event.preventDefault(); if (dragId) move(dragId, index); setDragId(null); }}>
-    <button className="story-title" disabled={busy} onClick={async () => { if (await mutate({ type: "select", storyId: item.id })) setCreating(false); }}>{index + 1}. {item.role}na soovin {item.action}, et {item.benefit}.</button>
-    <p className="story-meta">{statusLabels[item.status]} · {item.size ?? "Suurus määramata"} · {item.origin === "manual" ? "Käsitsi" : "AI"}<br />{item.criteria.length} kriteeriumi · {mockupElementIds(item.mockupVersions[0]?.structureJson).length ? "Mockup olemas" : "Mockup puudub"} · {item.openQuestions.filter(q => !q.resolvedAt).length} avatud küsimust</p>
-    <div className="actions"><button aria-label={`Liiguta lugu ${index + 1} üles`} disabled={busy || index === 0} onClick={() => move(item.id, index - 1)}>↑</button><button aria-label={`Liiguta lugu ${index + 1} alla`} disabled={busy || index === data.stories.length - 1} onClick={() => move(item.id, index + 1)}>↓</button><button disabled={busy} onClick={() => mutate({ type: "boundary", storyId: item.id })}>MVP piir siia</button></div>
-   </article>{data.mvpBoundaryAfterStoryId === item.id && <div className="mvp-line"><strong>MVP piir</strong><button disabled={busy} onClick={() => mutate({ type: "boundary", storyId: null })}>Eemalda piir</button></div>}
-  </li>)}</ol>
+  {!!data.stories.length && <div className="board">{columns.map(column => <div className="board-column" key={column.status}
+   onDragOver={event => { if (dragId) event.preventDefault(); }}
+   onDrop={event => { event.preventDefault(); const dragged = data.stories.find(item => item.id === dragId); if (dragged && dragged.status !== column.status) changeStatus(dragged, column.status); setDragId(null); }}>
+   <div className="board-column-head"><h3>{statusLabels[column.status]}</h3><span className="count-badge">{column.items.length}</span></div>
+   <ol className="story-list">{column.items.map((item, index) => <li key={item.id}>
+    <article className={`story-card ${item.id === story?.id ? "selected" : ""}`} draggable={!busy}
+     onDragStart={event => { setDragId(item.id); event.dataTransfer.setData("text/plain", item.id); event.dataTransfer.effectAllowed = "move"; }}
+     onDragEnd={() => setDragId(null)}
+     onDragOver={event => { if (dragId) event.preventDefault(); }}
+     onDrop={event => { event.preventDefault(); event.stopPropagation(); const dragged = data.stories.find(story2 => story2.id === dragId); if (dragged) { if (dragged.status === column.status) moveWithinColumn(dragId!, column.status, index); else changeStatus(dragged, column.status); } setDragId(null); }}>
+     <button className="story-title" disabled={busy} onClick={async () => { if (await mutate({ type: "select", storyId: item.id })) setCreating(false); }}>{index + 1}. {item.role}na soovin {item.action}, et {item.benefit}.</button>
+     <p className="story-meta">{item.size ?? "Suurus määramata"} · {item.origin === "manual" ? "Käsitsi" : "AI"}<br />{item.criteria.length} kriteeriumi · {mockupElementIds(item.mockupVersions[0]?.structureJson).length ? "Mockup olemas" : "Mockup puudub"} · {item.openQuestions.filter(q => !q.resolvedAt).length} avatud küsimust</p>
+     <div className="actions"><button aria-label={`Liiguta lugu ${index + 1} üles`} disabled={busy || index === 0} onClick={() => moveWithinColumn(item.id, column.status, index - 1)}>↑</button><button aria-label={`Liiguta lugu ${index + 1} alla`} disabled={busy || index === column.items.length - 1} onClick={() => moveWithinColumn(item.id, column.status, index + 1)}>↓</button><button disabled={busy} onClick={() => mutate({ type: "boundary", storyId: item.id })}>MVP piir siia</button></div>
+    </article>{data.mvpBoundaryAfterStoryId === item.id && <div className="mvp-line"><strong>MVP piir</strong><button disabled={busy} onClick={() => mutate({ type: "boundary", storyId: null })}>Eemalda piir</button></div>}
+   </li>)}</ol>
+  </div>)}</div>}
   {!!data.stories.length && <ManualGrooming stories={data.stories} selectedStoryId={data.selectedStoryId} busy={busy} mutate={mutate} />}
-  {story && !creating && <section className="story-inspector" key={`${story.id}-${story.version}`} aria-label="Valitud kasutajalugu">
-   <div id="story-story"><h3>Valitud kasutajalugu</h3><p className="muted">Versioon {story.version} · {story.origin === "manual" ? "Käsitsi loodud" : "AI loodud"}</p><StoryForm story={story} mutate={mutate} busy={busy} /></div>
+  {story && !creating && <section className="story-slideover" key={`${story.id}-${story.version}`} aria-label="Valitud kasutajalugu">
+   <div className="slideover-head"><p className="muted">Versioon {story.version} · {story.origin === "manual" ? "Käsitsi loodud" : "AI loodud"}</p><button type="button" className="text-button" aria-label="Sulge" onClick={() => mutate({ type: "select", storyId: null })}>✕ Sulge</button></div>
+   <div id="story-story"><StoryForm story={story} mutate={mutate} busy={busy} /></div>
    <details className="readiness" open><summary>Definition of Ready: {story.readiness.ready ? "tingimused täidetud" : "vajab tööd"}</summary>{story.readiness.issues.length > 0 && <ul>{story.readiness.issues.map((issue, i) => <li key={i}><a href={`#${areaId(issue.area)}`}>{issue.message}</a></li>)}</ul>}</details>
    <section id="story-criteria"><h3>Vastuvõtukriteeriumid</h3>{story.criteria.map((criterion, i) => <div className="child-card" key={criterion.id}><p className={`validation-${criterion.check.status}`}>{i + 1}. {criterion.check.status === "pass" ? "Kontroll läbitud" : criterion.check.status === "warning" ? "Hoiatus" : "Vigane"}</p>{criterion.check.messages.map(message => <p className="validation-note" key={message.code}>{message.message}</p>)}<CriterionForm storyId={story.id} criterion={criterion} mutate={mutate} busy={busy} /></div>)}<CriterionForm storyId={story.id} mutate={mutate} busy={busy} /></section>
    <section id="story-mockup"><h3>Mockup</h3><p className="muted">Praeguse mockupi elementide ID-d: {mockupElementIds(story.mockupVersions[0]?.structureJson).join(", ") || "puuduvad"}. Kasuta neid kriteeriumide viidetes.</p><MockupEditor storyId={story.id} versions={story.mockupVersions} busy={busy} mutate={mutate} /></section>

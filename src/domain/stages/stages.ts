@@ -1,5 +1,11 @@
+import type { ConversationTask } from "@/domain/ai/contracts";
 export const stages = ["idea", "roles", "stories", "priorities", "prototype", "refinements", "grooming"] as const;
 export type ProjectStage = (typeof stages)[number];
+/** Each stage has exactly one conversation task that drives it; used to group the chat history by relevance to the current stage. */
+export const stageTask: Record<ProjectStage, ConversationTask> = {
+  idea: "clarify_idea", roles: "propose_roles", stories: "propose_stories", priorities: "recommend_priority",
+  prototype: "propose_prototype", refinements: "propose_refinement", grooming: "review_backlog",
+};
 export const stageLabels: Record<ProjectStage, string> = {
   idea: "Idee", roles: "Rollid", stories: "Lood", priorities: "Prioriteedid",
   prototype: "Kriteeriumid ja mockup", refinements: "Täpsustused", grooming: "Groomimine",

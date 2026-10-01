@@ -54,9 +54,10 @@ test("create, navigate, restart server, and reopen persisted project", async ({ 
   await page.getByRole("button", { name: "Loo projekt" }).click();
   await expect(page.getByRole("heading", { name: "Spordiklubi test" })).toBeVisible();
   const projectUrl = page.url();
-  await page.getByRole("button", { name: "07 Groomimine" }).click();
+  const stageSteps = page.getByRole("group", { name: "Projekti etapid" });
+  await stageSteps.getByRole("button", { name: "07 Groomimine" }).click();
   await expect(page.getByRole("heading", { name: "Groomimine", exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "02 Rollid" }).click();
+  await stageSteps.getByRole("button", { name: "02 Rollid" }).click();
   await expect(page.getByRole("heading", { name: "Rollid", exact: true })).toBeVisible();
   await stopServer();
   await startServer();
@@ -69,9 +70,7 @@ test("create, navigate, restart server, and reopen persisted project", async ({ 
   await expect(page.getByRole("heading", { name: "Rollid", exact: true })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("workspace-desktop.png"), fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByRole("tab", { name: "Etapid" }).click();
-  await page.getByRole("button", { name: "05 Kriteeriumid ja mockup" }).click();
-  await page.getByRole("tab", { name: "Tööruum" }).click();
+  await stageSteps.getByRole("button", { name: "05 Kriteeriumid ja mockup" }).click();
   await expect(page.getByRole("heading", { name: "Kriteeriumid ja mockup", exact: true })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("workspace-mobile.png"), fullPage: true });
   await page.getByRole("tab", { name: "Backlog" }).click();
@@ -100,7 +99,11 @@ test("API validation returns useful errors without mutating state", async ({ req
 test("manual backlog, readiness, ordering, MVP and one-level undo work without AI", async ({ page, request }, testInfo) => {
   const created = await request.post("/api/projects", { data: { name: "Käsitsi backlog" } }); const project = await created.json();
   await page.goto(`/projects/${project.id}`);
+  await page.getByRole("tab", { name: "Backlog" }).click();
   const backlog = page.locator("#panel-backlog");
+  const ideaColumn = backlog.locator(".board-column").filter({ has: page.getByRole("heading", { name: "Idee", exact: true }) });
+  const clarifyColumn = backlog.locator(".board-column").filter({ has: page.getByRole("heading", { name: "Vajab täpsustamist", exact: true }) });
+  const doneColumn = backlog.locator(".board-column").filter({ has: page.getByRole("heading", { name: "Valmis arenduseks", exact: true }) });
   async function addStory(action: string) {
     await backlog.getByRole("button", { name: "Uus lugu", exact: true }).click();
     const form = backlog.locator(".story-create");
@@ -108,29 +111,47 @@ test("manual backlog, readiness, ordering, MVP and one-level undo work without A
     await form.getByLabel("Lugu vajab kasutajaliidest").uncheck(); await form.getByRole("button", { name: "Lisa lugu", exact: true }).click();
     await expect(backlog.getByRole("region", { name: "Valitud kasutajalugu" })).toBeVisible();
   }
+  // Both stories start as "idea", so they land in the same column - ordering, drag and MVP boundary stay meaningful before either moves status.
   await addStory("broneerida treeningu");
+  await addStory("muuta broneeringut");
+  await expect(ideaColumn.locator(".story-card")).toHaveCount(2);
+  await expect(ideaColumn.locator(".story-card").nth(0)).toContainText("broneerida treeningu");
+  await ideaColumn.getByRole("button", { name: "Liiguta lugu 2 üles" }).click();
+  await expect(ideaColumn.locator(".story-card").nth(0)).toContainText("muuta broneeringut");
+  await ideaColumn.locator(".story-card").nth(0).dragTo(ideaColumn.locator(".story-card").nth(1));
+  await expect(ideaColumn.locator(".story-card").nth(0)).toContainText("broneerida treeningu");
+  await ideaColumn.locator(".story-card").nth(0).getByRole("button", { name: "MVP piir siia" }).click();
+  await expect(ideaColumn.locator(".mvp-line")).toBeVisible();
+
+  await ideaColumn.locator(".story-title").nth(0).click();
   let inspector = backlog.getByRole("region", { name: "Valitud kasutajalugu" });
+  // The slideover remounts (it's keyed by story id + version) whenever selection or data changes underneath it;
+  // settle on the right story's own render before touching its fields, or a field write can land on a stale instance.
+  await expect(inspector.getByLabel("Tegevus", { exact: true })).toHaveValue("broneerida treeningu");
   await inspector.getByLabel("Staatus", { exact: true }).selectOption("ready_for_development"); await inspector.getByRole("button", { name: "Salvesta lugu", exact: true }).click();
   await expect(backlog.getByRole("alert")).toContainText("Lisa vähemalt kolm");
-  await expect(backlog.locator(".story-card")).toContainText("Idee");
+  await expect(ideaColumn.locator(".story-card").nth(0)).toContainText("broneerida treeningu");
   for (const text of ["Teenus salvestab broneeringu.", "Teenus saadab kinnituse e-postiga.", "Teenus keeldub täis treeningu broneerimisest."]) {
     await inspector.getByLabel("Uus kriteerium", { exact: true }).fill(text); await inspector.getByRole("button", { name: "Lisa kriteerium", exact: true }).click(); await expect(inspector.getByLabel("Uus kriteerium", { exact: true })).toHaveValue("");
   }
-  await inspector.getByLabel("Staatus", { exact: true }).selectOption("ready_for_development"); await inspector.getByRole("button", { name: "Salvesta lugu", exact: true }).click(); await expect(backlog.locator(".story-card")).toContainText("Valmis arenduseks");
-  await inspector.getByLabel("Uus küsimus").fill("Kas käibemaks on hinnas?"); await inspector.getByRole("button", { name: "Lisa küsimus", exact: true }).click(); await expect(backlog.locator(".story-card")).toContainText("Vajab täpsustamist");
-  await backlog.getByRole("button", { name: "Võta tagasi", exact: true }).click(); await expect(backlog.locator(".story-card")).toContainText("Valmis arenduseks"); await expect(backlog.getByRole("button", { name: "Võta tagasi", exact: true })).toBeDisabled();
-  await addStory("muuta broneeringut");
-  await backlog.locator(".story-card").nth(0).getByRole("button", { name: "MVP piir siia" }).click(); await expect(backlog.locator(".mvp-line")).toBeVisible();
-  await backlog.getByRole("button", { name: "Liiguta lugu 2 üles" }).click(); await expect(backlog.locator(".story-card").nth(0)).toContainText("muuta broneeringut");
-  await backlog.locator(".story-card").nth(0).dragTo(backlog.locator(".story-card").nth(1)); await expect(backlog.locator(".story-card").nth(0)).toContainText("broneerida treeningu");
-  await backlog.locator(".story-title").nth(0).click(); inspector = backlog.getByRole("region", { name: "Valitud kasutajalugu" });
-  await inspector.getByLabel("Kriteeriumi tekst").nth(0).fill("Teenuse kasutamine on kiire ja mugav."); await inspector.getByRole("button", { name: "Salvesta kriteerium", exact: true }).nth(0).click(); await expect(inspector.getByText("Hoiatus", { exact: false }).first()).toBeVisible(); await expect(backlog.locator(".story-card").nth(0)).toContainText("Vajab täpsustamist");
+  await inspector.getByLabel("Staatus", { exact: true }).selectOption("ready_for_development"); await inspector.getByRole("button", { name: "Salvesta lugu", exact: true }).click();
+  // The card moves out of Idee into Valmis arenduseks - and the MVP marker, which is attached to this story's id, follows it there.
+  await expect(doneColumn.locator(".story-card")).toContainText("broneerida treeningu");
+  await expect(doneColumn.locator(".mvp-line")).toBeVisible();
+  await expect(ideaColumn.locator(".story-card")).toHaveCount(1);
+  await expect(ideaColumn.locator(".mvp-line")).toHaveCount(0);
+  await inspector.getByLabel("Uus küsimus").fill("Kas käibemaks on hinnas?"); await inspector.getByRole("button", { name: "Lisa küsimus", exact: true }).click();
+  await expect(clarifyColumn.locator(".story-card")).toContainText("broneerida treeningu");
+  await backlog.getByRole("button", { name: "Võta tagasi", exact: true }).click();
+  await expect(doneColumn.locator(".story-card")).toContainText("broneerida treeningu"); await expect(backlog.getByRole("button", { name: "Võta tagasi", exact: true })).toBeDisabled();
+  await inspector.getByLabel("Kriteeriumi tekst").nth(0).fill("Teenuse kasutamine on kiire ja mugav."); await inspector.getByRole("button", { name: "Salvesta kriteerium", exact: true }).nth(0).click(); await expect(inspector.getByText("Hoiatus", { exact: false }).first()).toBeVisible(); await expect(clarifyColumn.locator(".story-card")).toContainText("broneerida treeningu");
   await backlog.getByRole("button", { name: "Võta tagasi", exact: true }).click(); await expect(inspector.getByLabel("Kriteeriumi tekst").nth(0)).toHaveValue("Teenus salvestab broneeringu.");
   await inspector.getByRole("button", { name: "Arhiveeri lugu" }).click(); await expect(backlog.locator(".mvp-line")).toHaveCount(0); await expect(backlog.getByRole("status")).toContainText("MVP piir eemaldati");
   await backlog.getByRole("button", { name: "Võta tagasi", exact: true }).click(); await expect(backlog.locator(".story-card")).toHaveCount(2); await expect(backlog.locator(".mvp-line")).toBeVisible();
-  await page.reload(); await expect(backlog.getByRole("region", { name: "Valitud kasutajalugu" })).toBeVisible(); await expect(backlog.locator(".mvp-line")).toBeVisible();
+  await page.reload(); await page.getByRole("tab", { name: "Backlog" }).click(); await expect(backlog.getByRole("region", { name: "Valitud kasutajalugu" })).toBeVisible(); await expect(backlog.locator(".mvp-line")).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("manual-backlog-desktop.png"), fullPage: true });
-  await page.setViewportSize({ width: 390, height: 844 }); await page.getByRole("tab", { name: "Backlog" }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  inspector = backlog.getByRole("region", { name: "Valitud kasutajalugu" });
   await expect(inspector.getByLabel("Uus küsimus")).toBeVisible(); expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: testInfo.outputPath("manual-backlog-mobile.png"), fullPage: true });
   const other = await (await request.post("/api/projects", { data: { name: "Teine backlog" } })).json();
@@ -144,6 +165,7 @@ test("manual mockup editing, safe rendering, history and restore persist", async
   const project = await (await request.post("/api/projects", { data: { name: "Mockupi ajalugu" } })).json();
   const state = await (await request.post(`/api/projects/${project.id}/backlog`, { data: { type: "create_story", role: "Liige", action: "broneerida treeningu", benefit: "koht oleks tagatud", status: "idea", size: null, requiresMockup: true } })).json();
   await page.goto(`/projects/${project.id}`);
+  await page.getByRole("tab", { name: "Backlog" }).click();
   const mockup = page.locator("#story-mockup");
   await mockup.getByText("Mockupi käsitsi lisamine või muutmine", { exact: true }).click();
   await mockup.getByRole("button", { name: "Salvesta uus mockup-versioon" }).click();
@@ -183,6 +205,7 @@ test("manual split and independent AI grooming findings preview, apply and undo 
   await request.post(`${base}/backlog`, { data: { type: "select", storyId: first.id } });
 
   await page.goto(`/projects/${project.id}`);
+  await page.getByRole("tab", { name: "Backlog" }).click();
   const backlog = page.locator("#panel-backlog");
   const grooming = backlog.locator(".manual-grooming");
   await grooming.getByRole("button", { name: "Jaga valitud lugu" }).click();
@@ -197,6 +220,8 @@ test("manual split and independent AI grooming findings preview, apply and undo 
   await backlog.getByRole("button", { name: "Võta tagasi", exact: true }).click();
   await expect(backlog.locator(".story-card")).toHaveCount(3);
 
+  // "Vaata backlog üle" is a next-action button on the Vestlus panel, not the Backlog panel.
+  await page.getByRole("tab", { name: "Vestlus" }).click();
   await page.getByRole("button", { name: "Vaata backlog üle" }).click();
   const review = page.locator(".grooming-review").last();
   await expect(review.getByRole("heading", { name: "Backlogi ülevaatus" })).toBeVisible();
@@ -209,10 +234,14 @@ test("manual split and independent AI grooming findings preview, apply and undo 
   await expect(duplicate.getByText("Leid rakendatud", { exact: true })).toBeVisible();
   await expect(oversized.getByRole("button", { name: "Rakenda leid" })).toBeVisible();
   await expect(backlog.locator(".story-card")).toHaveCount(2);
+  await page.getByRole("tab", { name: "Backlog" }).click();
   await backlog.getByRole("button", { name: "Võta tagasi", exact: true }).click();
   await expect(backlog.locator(".story-card")).toHaveCount(3);
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByRole("tab", { name: "Tööruum" }).click();
+  // On mobile the selected-story panel takes the full screen (by design) and covers the tab bar underneath it; close it first.
+  await page.keyboard.press("Escape");
+  await expect(backlog.getByRole("region", { name: "Valitud kasutajalugu" })).toHaveCount(0);
+  await page.getByRole("tab", { name: "Vestlus" }).click();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: testInfo.outputPath("grooming-mobile.png"), fullPage: true });
 });
@@ -336,6 +365,7 @@ test("confirm roles, select happy-path stories and explicitly choose priority", 
   await page.reload();
   await expect(page.locator("#story-mockup")).toContainText("Hind sisaldab käibemaksu 24%.");
   await expect(page.locator(".resume-card").getByRole("heading", { name: "Groomimine", exact: true })).toBeVisible();
+  await page.getByRole("tab", { name: "Backlog" }).click();
   await page.locator("#panel-backlog").getByRole("button", { name: "Võta tagasi", exact: true }).click();
   await expect(page.locator("#story-criteria").getByLabel("Kriteeriumi tekst")).toHaveCount(3);
   const undone = await (await request.get(`/api/projects/${project.id}/backlog`)).json();
@@ -346,7 +376,10 @@ test("confirm roles, select happy-path stories and explicitly choose priority", 
   expect(undone.stories[1]).toEqual(siblingBefore);
   await page.screenshot({ path: testInfo.outputPath("story-priority-flow.png"), fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByRole("tab", { name: "Tööruum" }).click();
+  // On mobile the selected-story panel takes the full screen (by design) and covers the tab bar underneath it; close it first.
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("region", { name: "Valitud kasutajalugu" })).toHaveCount(0);
+  await page.getByRole("tab", { name: "Vestlus" }).click();
   await expect(page.locator(".prototype-proposal").last()).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: testInfo.outputPath("prototype-mobile.png"), fullPage: true });
@@ -355,6 +388,7 @@ test("confirm roles, select happy-path stories and explicitly choose priority", 
 test("prototype stale conflict and discard preserve story state", async ({ page, request }) => {
   const project = await (await request.post("/api/projects", { data: { name: "WP06 konflikt" } })).json();
   await page.goto(`/projects/${project.id}`);
+  await page.getByRole("tab", { name: "Backlog" }).click();
   await page.getByRole("button", { name: "Uus lugu", exact: true }).click();
   const form = page.locator(".story-create");
   await form.getByLabel("Roll", { exact: true }).fill("Liige");
@@ -363,6 +397,8 @@ test("prototype stale conflict and discard preserve story state", async ({ page,
   await form.getByRole("button", { name: "Lisa lugu", exact: true }).click();
   await expect(page.locator("#panel-backlog .story-card")).toHaveCount(1);
   const created = await (await request.get(`/api/projects/${project.id}/backlog`)).json();
+  // "Koosta valitud loo prototüüp" is a next-action button on the Vestlus panel.
+  await page.getByRole("tab", { name: "Vestlus" }).click();
   await page.getByRole("button", { name: "Koosta valitud loo prototüüp" }).click();
   const prototype = page.locator(".prototype-proposal").last();
   await expect(prototype.getByRole("button", { name: "Rakenda kriteeriumid ja mockup" })).toBeVisible();
@@ -391,6 +427,7 @@ test("unavailable AI saves messages, safe retry and manual backlog remain usable
     expect(JSON.stringify(history)).not.toMatch(/e2e-provider-key-never-public|OPENAI_API_KEY|Authorization|stack|Bearer/);
     expect(await page.content()).not.toContain("e2e-provider-key-never-public");
     expect((await request.post(`/api/projects/${p.id}/conversation`, { data: { kind: "text", text: "x", task: "execute_script" } })).status()).toBe(400);
+    await page.getByRole("tab", { name: "Backlog" }).click();
     await page.getByRole("button", { name: "Uus lugu", exact: true }).click();
     const form = page.locator(".story-create");
     await form.getByLabel("Roll", { exact: true }).fill("Liige"); await form.getByLabel("Tegevus", { exact: true }).fill("broneerida"); await form.getByLabel("Kasu", { exact: true }).fill("saan treenida");
@@ -434,7 +471,7 @@ test("refinement stale conflict, discard and regeneration preserve isolation", a
   const fresh = page.locator(".refinement-proposal").last();
   await expect(fresh).toContainText(`Loo versioon ${before.stories[0].version}`);
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByRole("tab", { name: "Tööruum" }).click();
+  await page.getByRole("tab", { name: "Vestlus" }).click();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: testInfo.outputPath("refinement-mobile.png"), fullPage: true });
   await fresh.getByRole("button", { name: "Rakenda täpsustus" }).click();
