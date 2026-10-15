@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { groomingOperationSchema, reviewPayloadSchema, type GroomingStoryPreview } from "@/domain/grooming/contracts";
-import { mockupDocumentSchema } from "@/domain/mockup/document";
+import { mockupDocumentSchema, type MockupDocument } from "@/domain/mockup/document";
 import { mockupElementIds } from "@/domain/criteria/validation";
 
 const text = z.string().trim().min(1).max(1000);
@@ -36,6 +36,7 @@ export const prototypePayloadSchema = z.strictObject({
   if (!ids.length || value.criteria.some(item => new Set(item.mockupElementIds).size !== item.mockupElementIds.length || item.mockupElementIds.some(id => !ids.includes(id)))) ctx.addIssue({ code: "custom", message: "Mockup mappings must reference unique existing elements" });
 });
 export type PrototypePayload = z.infer<typeof prototypePayloadSchema>;
+export type PrototypeConfirmation = { mockup: MockupDocument; criteria: PrototypePayload["criteria"]; acceptProposedStory: boolean };
 
 const storyWordingSchema = z.strictObject({ role: shortText, action: shortText, benefit: shortText });
 const refinementCriterionSchema = z.strictObject({ text, mockupElementIds: z.array(z.string().min(1).max(100)).max(200) });
@@ -87,11 +88,11 @@ export const proposalCommandSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("confirm_roles"), proposalId: z.string().min(1).max(100), roles: z.array(z.strictObject({ temporaryId: id, name: shortText })).min(1).max(8), primaryTemporaryId: id }),
   z.strictObject({ kind: z.literal("confirm_stories"), proposalId: z.string().min(1).max(100), selectedTemporaryIds: z.array(id).min(1).max(8) }),
   z.strictObject({ kind: z.literal("confirm_priority"), proposalId: z.string().min(1).max(100), storyId: z.string().min(1).max(100) }),
-  z.strictObject({ kind: z.literal("confirm_prototype"), proposalId: z.string().min(1).max(100), acceptProposedStory: z.boolean(), criteria: z.array(z.strictObject({ temporaryId: id, text, mockupElementIds: z.array(z.string().min(1).max(100)).max(200) })).min(1).max(20) }),
+  z.strictObject({ kind: z.literal("confirm_prototype"), proposalId: z.string().min(1).max(100), acceptProposedStory: z.boolean(), mockup: mockupDocumentSchema.optional(), criteria: z.array(z.strictObject({ temporaryId: id, text, mockupElementIds: z.array(z.string().min(1).max(100)).max(200) })).min(1).max(20) }),
   z.strictObject({ kind: z.literal("confirm_refinement"), proposalId: z.string().min(1).max(100), edits: z.strictObject({ story: storyWordingSchema.optional(), criteria: z.array(refinementCriterionSchema).min(1).max(20).optional(), mockup: mockupDocumentSchema.optional() }) }),
   z.strictObject({ kind: z.literal("reject_refinement"), proposalId: z.string().min(1).max(100) }),
   z.strictObject({ kind: z.literal("reject_prototype"), proposalId: z.string().min(1).max(100) }),
 ]);
 
-export type ConversationEntry = { id: string; role: "user" | "assistant" | "system_event"; messageType: string; content: string; createdAt: string; response: ConversationResponse | null; task: ConversationTask | null; proposalId: string | null; proposalStatus: "pending" | "applied" | "rejected" | "superseded" | null; answeredQuestionIds: string[]; findingProposals: Array<{ temporaryId: string; proposalId: string; status: string; beforeStories: GroomingStoryPreview[] }>; requestStatus: "processing" | "complete" | "failed" | null };
+export type ConversationEntry = { id: string; role: "user" | "assistant" | "system_event"; messageType: string; content: string; createdAt: string; response: ConversationResponse | null; prototypeConfirmation?: PrototypeConfirmation; task: ConversationTask | null; proposalId: string | null; proposalStatus: "pending" | "applied" | "rejected" | "superseded" | null; answeredQuestionIds: string[]; findingProposals: Array<{ temporaryId: string; proposalId: string; status: string; beforeStories: GroomingStoryPreview[] }>; requestStatus: "processing" | "complete" | "failed" | null };
 export type ConversationData = { mode: "fixture" | "live" | "unavailable"; messages: ConversationEntry[]; roles: Array<{ id: string; name: string; isPrimary: boolean }>; stories: Array<{ id: string; role: string; action: string; benefit: string; position: number }>; selectedStoryId: string | null };

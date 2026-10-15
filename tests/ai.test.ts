@@ -288,6 +288,28 @@ describe("role, story and priority proposal workflow", () => {
     expect(undone.recommendedNextStage).toBe("idea");
   });
 
+  it("confirms user-edited drawing geometry and text, validates deleted references and retains the confirmed conversation preview", async () => {
+    const { project, stories, target, sibling, message, payload } = await prototypeSetup();
+    expect(payload.mockup.canvas).toBeDefined();
+    const drawing = structuredClone(payload.mockup);
+    const form = drawing.elements.find(element => element.id === "booking-form")!;
+    form.children![1] = { ...form.children![1], label: "Saada broneering", layout: { ...form.children![1].layout!, x: 48 } };
+    const criteria = payload.criteria.slice(0, 3);
+    const command = { kind: "confirm_prototype", proposalId: message.proposalId, acceptProposedStory: false, criteria, mockup: drawing };
+    const workflow = proposalWorkflowService(client);
+    const invalid = structuredClone(drawing);
+    invalid.elements.find(element => element.id === "booking-form")!.children = [];
+    await expect(workflow.confirm(project.id, { ...command, mockup: invalid })).rejects.toMatchObject({ status: 422 });
+    expect((await stories.get(project.id)).stories[0]).toEqual(target);
+    await workflow.confirm(project.id, command);
+    const state = await stories.get(project.id);
+    expect(JSON.parse(state.stories[0].mockupVersions[0].structureJson)).toEqual(drawing);
+    expect(state.stories[1]).toEqual(sibling);
+    const conversation = await conversationService(client, fixture).get(project.id);
+    expect(conversation.messages.find(item => item.id === message.id)?.prototypeConfirmation).toEqual({ mockup: drawing, criteria, acceptProposedStory: false });
+    expect(conversation.messages.find(item => item.id === message.id)?.response?.payload).toEqual(payload);
+  });
+
   it("rejects stale versions, cross-project/target commands and invalid edited mappings without partial writes", async () => {
     const { project, stories, target, message, payload } = await prototypeSetup();
     const workflow = proposalWorkflowService(client);

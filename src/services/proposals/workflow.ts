@@ -84,7 +84,9 @@ export function proposalWorkflowService(client: PrismaClient) {
           const story = await tx.story.findFirst({ where: { id: proposal.targetStoryId, projectId, archivedAt: null }, include: storyInclude });
           if (!story) throw new BacklogError("Ettepaneku lugu ei leitud.", 404);
           if (story.version !== proposal.baseStoryVersion) throw new BacklogError("Lugu on pärast ettepaneku loomist muutunud. Genereeri prototüüp uuesti.", 409);
-          const ids = mockupElementIds(JSON.stringify(payload.mockup));
+          const mockup = command.mockup ?? payload.mockup;
+          const ids = mockupElementIds(JSON.stringify(mockup));
+          if (!ids.length) throw new BacklogError("Lisa joonisele vähemalt üks element.", 422);
           if (new Set(command.criteria.map(item => item.temporaryId)).size !== command.criteria.length || command.criteria.some(item => !payload.criteria.some(offered => offered.temporaryId === item.temporaryId) || new Set(item.mockupElementIds).size !== item.mockupElementIds.length || checkCriterion(item.text, item.mockupElementIds, ids).status === "fail")) throw new BacklogError("Paranda kriteeriumide tekst või mockup-viited enne kinnitamist.", 422);
           const before = await backlogSnapshot(tx, projectId);
           const claim = await tx.proposal.updateMany({ where: { id: proposal.id, projectId, status: "pending" }, data: { status: "applied", resolvedAt: new Date() } });
@@ -94,7 +96,14 @@ export function proposalWorkflowService(client: PrismaClient) {
             const check = checkCriterion(criterion.text, criterion.mockupElementIds, ids);
             await tx.acceptanceCriterion.create({ data: { storyId: story.id, text: criterion.text, position, origin: "ai", mockupElementIdsJson: JSON.stringify(criterion.mockupElementIds), validationStatus: check.status, validationMessagesJson: JSON.stringify(check.messages) } });
           }
-          await appendMockup(tx, story.id, payload.mockup.screenName, payload.mockup, "ai");
+          await appendMockup(tx, story.id, mockup.screenName, mockup, "ai");
+          // Keep the AI response as the proposal history; store the user's confirmed drawing alongside it.
+          const messages = await tx.conversationMessage.findMany({ where: { projectId, role: "assistant" }, select: { id: true, structuredPayloadJson: true } });
+          for (const message of messages) {
+            let stored: Record<string, unknown>;
+            try { stored = JSON.parse(message.structuredPayloadJson ?? "{}"); } catch { continue; }
+            if (stored?.proposalId === proposal.id) await tx.conversationMessage.update({ where: { id: message.id }, data: { structuredPayloadJson: JSON.stringify({ ...stored, prototypeConfirmation: { mockup, criteria: command.criteria, acceptProposedStory: command.acceptProposedStory } }) } });
+          }
           await tx.story.update({ where: { id: story.id }, data: { ...(command.acceptProposedStory && payload.proposedStory ? payload.proposedStory : {}), version: { increment: 1 } } });
           const changed = await tx.story.findUniqueOrThrow({ where: { id: story.id }, include: storyInclude });
           const readiness = calculateReadiness(changed);

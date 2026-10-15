@@ -1,6 +1,6 @@
 import "server-only";
 import type { PrismaClient } from "@/generated/prisma/client";
-import { conversationInputSchema, taskSchemas, type ConversationData, type ConversationEntry, type ConversationTask } from "@/domain/ai/contracts";
+import { conversationInputSchema, proposalCommandSchema, taskSchemas, type ConversationData, type ConversationEntry, type ConversationTask } from "@/domain/ai/contracts";
 import { aiMode, configuredProvider, generateValidated, AiInvalidOutputError, AiUnavailableError, type AiProvider } from "@/lib/ai/provider";
 import { projectIdSchema } from "@/lib/validation/projects";
 import { BacklogError } from "@/lib/validation/backlog";
@@ -45,7 +45,9 @@ export function conversationService(client: PrismaClient, provider?: AiProvider)
         const task = isTask(stored.task) ? stored.task : null;
         const parsed = task && row.role === "assistant" ? taskSchemas[task].safeParse(stored.response) : null;
         const proposalId = typeof stored.proposalId === "string" ? stored.proposalId : null;
-        return { id: row.id, role: row.role, messageType: row.messageType, content: row.content, createdAt: row.createdAt.toISOString(), task, response: parsed?.success ? parsed.data : null, proposalId, proposalStatus: proposalId ? statuses.get(proposalId)?.status ?? null : null, findingProposals: (Array.isArray(stored.findingProposals) ? stored.findingProposals as Array<{ temporaryId: string; proposalId: string }> : []).map(item => ({ ...item, status: statuses.get(item.proposalId)?.status ?? "superseded", beforeStories: (() => { try { const value = JSON.parse(statuses.get(item.proposalId)?.beforeSnapshotJson ?? "[]"); return Array.isArray(value) ? value : []; } catch { return []; } })() })), requestStatus: stored.status === "processing" || stored.status === "complete" || stored.status === "failed" ? stored.status : null, answeredQuestionIds: Array.isArray(stored.answeredQuestionIds) ? stored.answeredQuestionIds.filter((value): value is string => typeof value === "string") : [] } satisfies ConversationEntry;
+        const confirmed = task === "propose_prototype" && statuses.get(proposalId ?? "")?.status === "applied" && stored.prototypeConfirmation && typeof stored.prototypeConfirmation === "object" ? proposalCommandSchema.safeParse({ ...stored.prototypeConfirmation, kind: "confirm_prototype", proposalId }) : null;
+        const prototypeConfirmation = confirmed?.success && confirmed.data.kind === "confirm_prototype" && confirmed.data.mockup ? { mockup: confirmed.data.mockup, criteria: confirmed.data.criteria, acceptProposedStory: confirmed.data.acceptProposedStory } : undefined;
+        return { id: row.id, role: row.role, messageType: row.messageType, content: row.content, createdAt: row.createdAt.toISOString(), task, response: parsed?.success ? parsed.data : null, prototypeConfirmation, proposalId, proposalStatus: proposalId ? statuses.get(proposalId)?.status ?? null : null, findingProposals: (Array.isArray(stored.findingProposals) ? stored.findingProposals as Array<{ temporaryId: string; proposalId: string }> : []).map(item => ({ ...item, status: statuses.get(item.proposalId)?.status ?? "superseded", beforeStories: (() => { try { const value = JSON.parse(statuses.get(item.proposalId)?.beforeSnapshotJson ?? "[]"); return Array.isArray(value) ? value : []; } catch { return []; } })() })), requestStatus: stored.status === "processing" || stored.status === "complete" || stored.status === "failed" ? stored.status : null, answeredQuestionIds: Array.isArray(stored.answeredQuestionIds) ? stored.answeredQuestionIds.filter((value): value is string => typeof value === "string") : [] } satisfies ConversationEntry;
       }),
     };
   }

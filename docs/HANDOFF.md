@@ -78,3 +78,53 @@ WP-10 — documentation and demonstration package. WP-00 through WP-10 are accep
 - The mandatory submission scope is complete. Begin WP-11 only if an optional extension is explicitly selected.
 - Preserve explicit human confirmation, story-scoped mutation, atomic transactions, idempotency, append-only mockup history, deterministic fixture acceptance and the documented local-only security boundary.
 - Re-run the complete acceptance matrix after any optional feature and keep that feature independently removable.
+
+## interactive wireframe editor — 2026-10-12
+
+- Extended the existing uncommitted mockup builder with a visual canvas, palette drops, pointer-based movement and resizing with an 8 px grid, numeric geometry controls, a larger workspace, device widths, preview, and undo/redo.
+- Optional bounded canvas and element geometry remain compatible with old documents and persist through the existing append-only version API. Nested composition remains available through the outline; canvas movement operates on top-level elements.
+- Validation: production build, TypeScript checking, ESLint, 60 unit tests, and both targeted Chromium mockup scenarios passed. Browser tests cover actual palette dragging, pointer movement/resizing, undo/redo, width changes, saved geometry, reload, history restoration, and mobile overflow.
+- Palette dragging uses native HTML drag/drop. Touch users can add elements with palette taps and then move/resize them with pointer handles or numeric controls.
+
+## AI-first editable wireframes — 2026-10-12
+
+- Prototype proposals now open an AI-created drawing directly in conversation using the same editor as the story's saved mockup. Criteria are a collapsed checklist; technical element-ID selects have been replaced with optional links using visible element names.
+- AI instructions request domain-specific, positioned wireframes. Shared layout preparation gives legacy component trees editable geometry while preserving IDs and hierarchy. Prototype and refinement outputs include canvas geometry, including fallback placement for elements missing coordinates.
+- All nested drawing elements can be selected and dragged directly, with resize handles and property editing. The larger workspace places properties beside the canvas; layers are collapsed by default.
+- Prototype confirmation accepts the edited mockup, validates criteria against that drawing, and saves it atomically. Confirmed drawing/criteria metadata is stored alongside the original AI response so conversation previews survive reload without rewriting proposal history.
+- Validation: production build, type checking, lint, 62 unit tests, and all 12 Chromium scenarios passed. The new scenario verifies editable AI geometry, nested element editing/direct dragging, no story mutation before confirmation, and persistence in both conversation and backlog. Reviewed screenshots of the larger editor. Live model generation was not exercised; deterministic fixture generation and provider-boundary tests cover the integration.
+
+## wireframe visibility correction — 2026-10-12
+
+- Unselected elements now retain an opaque white surface and a visible neutral border; selection adds a green frame. Empty elements have a readable type placeholder.
+- Fixed list rendering, which previously omitted its label and descriptive text. Canvas containers with children suppress empty placeholders so these cannot overlap nested content.
+- Validation: production build and lint passed, 63 unit tests passed, and three targeted Chromium wireframe/mockup scenarios passed. The AI editor scenario explicitly deselects an element and verifies that its text, white surface and border remain visible.
+
+## keyboard deletion and button appearance — 2026-10-12
+
+- Backspace and Delete remove the selected drawing element within the active editor, with undo support. Inputs, textareas, selects, contenteditable regions, composition and modified key combinations are excluded; busy and preview modes cannot delete. Canvas and outline selection move keyboard focus into the editor.
+- Unselected buttons now omit the surrounding canvas box, keeping their actual button surface visible; selection still draws the green frame. Other elements retain their neutral frame.
+- Validation: production build and lint passed; two targeted Chromium scenarios passed, covering text Backspace protection, selected-element deletion/restoration, and transparent unselected button boxes with visible button content.
+
+## live development compatibility and button bounds — 2026-10-12
+
+- Button wrapper transparency also matches the rendered button child, supporting already-mounted canvas elements without the newer type class. Removed inner button padding and made the actual button fill its drawing bounds; saved previews use the same sizing.
+- Clicking preserves authored coordinates instead of snapping to the grid without a drag. Added regression coverage for selection/deletion on positions between grid lines.
+- Added only the loopback hostname `127.0.0.1` to Next's allowed development origins. An isolated browser reproduced a non-hydrated development page at that hostname before the change; both localhost and the IP address then supported selection and Backspace on the actual calendar proposal. No project mutations were saved during live diagnostics.
+- Validation: build, lint and two targeted Chromium scenarios passed, including legacy wrapper CSS compatibility, zero button padding, text editing protection and keyboard deletion/undo.
+
+## detailed wireframe components and content fitting — 2026-10-12
+
+- Added a calendar element, semantic tables with editable headers/rows, calendar days and time slots, dropdown/date/email/number/text-area fields, list rows, navigation, card/form placeholders, notice icons and image placeholders. Widget data remains bounded structured text; no executable markup or external assets are accepted.
+- Legacy table elements whose ID/label identifies a calendar use the calendar presentation without changing their IDs. Named Estonian calendar months derive their length and weekday offset, with an optional explicit override.
+- Shared layout fitting applies to the editor, AI generation and saved canvas previews. Undersized fields/widgets expand to their content minimum; side-by-side rows remain aligned and subsequent rows move down while preserving gaps. Updates to widget content fit immediately, including previously mounted editors. Clicking to add an element places it below existing elements.
+- AI instructions now request typed widgets with domain-specific sample data and adequate dimensions. Properties expose editable dropdown options, table data, list items, calendar month/day/slots and input kinds.
+- Validation: build/type checking and lint passed; 67 unit tests and all 13 Chromium scenarios passed. The new scenario uses the reported 48 px fields and legacy calendar table, measures dropdown/slot containment, edits calendar/table data, saves and reloads. Reviewed the detailed editor screenshot. Live model output was not exercised.
+
+## dedicated grooming workspace — 2026-10-15
+
+- Added a persistent Groomimine tab and stage navigation into a dedicated findings list/detail workspace, explicit review button, category totals, status labels and empty/unavailable states.
+- Replaced repair JSON with wording/criteria fields, selectable mockup mappings and the existing visual wireframe editor. Split results have criterion assignment controls and additional result cards; merges show sources and repeated criteria side by side.
+- Applying/ignoring advances to the next active finding. Version comparisons disable stale sibling findings after backlog changes; undo is directly available and synchronizes all workspace views. Manual split/merge remains available in both backlog and grooming views.
+- Added an optional NEXT_BUILD_DIR configuration for isolated builds/demo servers; .next-grooming is excluded from Git and lint.
+- Validation: 67 unit tests, type check, lint and production build passed. New Chromium coverage exercises repair editing, stale siblings, next finding, merge comparison, undo and mobile overflow.

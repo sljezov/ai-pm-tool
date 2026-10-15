@@ -3,9 +3,10 @@ import { fixtureReview } from "@/domain/grooming/review";
 import { validateGrooming } from "@/services/grooming/service";
 import type { BacklogSnapshot } from "@/services/stories/service";
 import { z } from "zod";
-import { taskSchemas, type AiTask, type ConversationTask } from "@/domain/ai/contracts";
+import { prototypePayloadSchema, taskSchemas, type AiTask, type ConversationTask } from "@/domain/ai/contracts";
 import { refinementErrors } from "@/domain/ai/refinement";
 import { mockupFixtures } from "@/domain/mockup/document";
+import { prepareCanvas } from "@/domain/mockup/layout";
 export type AiRequest = { task: AiTask; systemInstructions: string; context: unknown; outputSchema: unknown };
 export interface AiProvider { generateStructured<T>(request: AiRequest): Promise<T> }
 export class AiUnavailableError extends Error { constructor() { super("AI pole praegu saadaval. Sinu sõnum on salvestatud; proovi uuesti või jätka käsitsi."); } }
@@ -29,7 +30,7 @@ export class OpenAiProvider implements AiProvider {
       const response = await fetch("https://api.openai.com/v1/responses", {
         method: "POST", signal: AbortSignal.timeout(providerTimeoutMs(request.task)),
         headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ model: process.env.OPENAI_MODEL, store: false, instructions: request.systemInstructions, input: JSON.stringify(request.context), max_output_tokens: request.task === "review_backlog" ? 10_000 : request.task === "propose_refinement" ? 6000 : 3000, text: { format: { type: "json_schema", name: request.task, strict: true, schema: request.outputSchema } } }),
+        body: JSON.stringify({ model: process.env.OPENAI_MODEL, store: false, instructions: request.systemInstructions, input: JSON.stringify(request.context), max_output_tokens: request.task === "review_backlog" ? 10_000 : (request.task === "propose_refinement" || request.task === "propose_prototype") ? 6000 : 3000, text: { format: { type: "json_schema", name: request.task, strict: true, schema: request.outputSchema } } }),
       });
       if (!response.ok) throw new AiUnavailableError();
       const body = await response.text();
@@ -60,7 +61,7 @@ export class AnthropicProvider implements AiProvider {
         method: "POST", signal: AbortSignal.timeout(providerTimeoutMs(request.task)),
         headers: { "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: process.env.ANTHROPIC_MODEL, max_tokens: request.task === "review_backlog" ? 10_000 : request.task === "propose_refinement" ? 6000 : 3000,
+          model: process.env.ANTHROPIC_MODEL, max_tokens: request.task === "review_backlog" ? 10_000 : (request.task === "propose_refinement" || request.task === "propose_prototype") ? 6000 : 3000,
           system: request.systemInstructions, messages: [{ role: "user", content: JSON.stringify(request.context) }],
           tools: [{ name: "respond", description: "Return the structured response for this task.", input_schema: request.outputSchema }],
           tool_choice: { type: "tool", name: "respond" },
@@ -164,7 +165,7 @@ export async function generateValidated(provider: AiProvider, task: Conversation
   let errors: { path: string; code: string }[] = [];
   for (let attempt = 0; attempt < 2; attempt++) {
     let raw: unknown;
-    try { raw = await withProviderTimeout(provider.generateStructured<unknown>({ task, systemInstructions: instructions, context: attempt ? { original: context, repair: { errors, instruction: "Return a corrected complete response matching the schema." } } : context, outputSchema }), task); }
+    try { raw = await withProviderTimeout(provider.generateStructured<unknown>({ task, systemInstructions: instructions + "\npropose_prototype: loo päris wireframe kasutajaloo valdkonna ja tegevuse põhjal, mitte üldine treeningu näidis. mockup.canvas määrab ekraani width (375, 768 või 1200) ja height (480–4000). Igal nähtaval elemendil on layout: x, y, width, height täisarvulistes pikslites. Laste koordinaadid on vanema suhtes. Paiguta pealkiri, navigatsioon, väljad, kaardid, nupud ja tagasiside loogiliselt; ära lase elementidel kattuda ega väljuda vanema piiridest. Kasuta realistlikke eestikeelseid silte, kohatäiteid ja näidisandmeid. Säilita olemasolevate elementide ID-d. Kasutaja muudab sama joonist visuaalses koostajas; HTML, CSS, SVG ega pildi-URL ei ole joonistusformaat. Kasuta type=calendar kalendrivaate jaoks (props.monthLabel, startWeekday, selectedDay, slots). Tabeli props.headers ja props.rows peavad sisaldama loo valdkonnale sobivaid näidisandmeid; field.props.inputType vali text/select/date/email/number/textarea ja rippmenüü jaoks lisa props.options. Loend kasuta props.items. Ära joonista kalendrit või tabelit tühja konteinerina. Arvesta sisuga: field vähemalt 92 px, calendar vähemalt 480 px, tabel vähemalt 96 + 40 korda ridade arv px kõrge; jäta elementide vahele vahed.", context: attempt ? { original: context, repair: { errors, instruction: "Return a corrected complete response matching the schema." } } : context, outputSchema }), task); }
     catch (error) { if (!(error instanceof AiInvalidOutputError)) throw error; errors = [{ path: "response", code: "invalid_output" }]; continue; }
     let value = raw;
     try { if (typeof raw !== "string" && JSON.stringify(raw).length > 40_000) throw new Error(); if (typeof raw === "string") { if (raw.length > 40_000) throw new Error(); value = JSON.parse(raw); } }
@@ -205,6 +206,13 @@ export async function generateValidated(provider: AiProvider, task: Conversation
           if (!("findings" in result.data.payload)) throw new Error();
           for (const finding of result.data.payload.findings) validateGrooming(finding.operation, stories);
         } catch { errors = [{ path: "payload.findings", code: "invalid_scope_distribution_or_result" }]; continue; }
+      }
+      if (task === "propose_prototype") {
+        const payload = prototypePayloadSchema.parse(result.data.payload);
+        return { ...result.data, payload: { ...payload, mockup: prepareCanvas(payload.mockup) } };
+      }
+      if (task === "propose_refinement" && "crossStorySuggestions" in result.data.payload && result.data.payload.mockup) {
+        return { ...result.data, payload: { ...result.data.payload, mockup: { ...result.data.payload.mockup, after: prepareCanvas(result.data.payload.mockup.after) } } };
       }
       return result.data;
     }
